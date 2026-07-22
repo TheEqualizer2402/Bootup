@@ -2,6 +2,45 @@
 
 Verbindet ioBroker mit der BootUp myHomeControl Cloud-API.
 
+## Workflow: GitHub als zentrale Codebasis
+
+Dieses Projekt wird über ein privates GitHub-Repository verwaltet. Der
+Server, auf dem ioBroker läuft, zieht sich den Code direkt von dort per
+`git clone` / `git pull` - es müssen keine Dateien mehr manuell per ZIP
+kopiert werden.
+
+### Einmalige Ersteinrichtung auf dem ioBroker-Server
+
+```bash
+cd /opt/iobroker/node_modules
+git clone https://github.com/DEIN-USERNAME/DEIN-REPO-NAME.git iobroker.bootup
+cd iobroker.bootup
+npm install --production
+cd /opt/iobroker
+iobroker upload bootup
+iobroker add bootup
+```
+
+Bei einem privaten Repo fragt Git beim Klonen nach Zugangsdaten:
+- Username: dein GitHub-Benutzername
+- Passwort: ein Personal Access Token (kein normales Passwort) -
+  erstellbar unter GitHub → Profilbild → Settings → Developer settings →
+  Personal access tokens → Generate new token (Scope: `repo`)
+
+Danach über die Admin-Oberfläche die Instanz `bootup.0` konfigurieren
+(siehe Abschnitt "Konfiguration" unten) und starten.
+
+### Bei jedem künftigen Update
+
+```bash
+cd /opt/iobroker/node_modules/iobroker.bootup
+git pull
+npm install --production        # nur nötig, falls sich package.json geändert hat
+cd /opt/iobroker
+iobroker upload bootup          # nur nötig, falls sich admin/jsonConfig.json geändert hat
+iobroker restart bootup.0
+```
+
 ## Installation zum Testen (lokal, ohne npm-Veröffentlichung)
 
 Am einfachsten mit dem offiziellen Dev-Server-Tool testen (läuft mit echtem
