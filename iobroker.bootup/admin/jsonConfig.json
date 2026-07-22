@@ -1,0 +1,36 @@
+{
+  "type": "panel",
+  "items": {
+    "apiKey": {
+      "type": "password",
+      "label": "X-API-KEY",
+      "help": "Dein geheimer BootUp-API-Schlüssel",
+      "newLine": true,
+      "sm": 12,
+      "md": 6
+    },
+    "host": {
+      "type": "text",
+      "label": "Host",
+      "help": "z.B. www.bootup.ch",
+      "sm": 12,
+      "md": 6
+    },
+    "basePath": {
+      "type": "text",
+      "label": "API Base-Path",
+      "help": "z.B. /mhccloudserver/api/v1",
+      "newLine": true,
+      "sm": 12,
+      "md": 6
+    },
+    "pollInterval": {
+      "type": "number",
+      "label": "Abfrage-Intervall (Sekunden)",
+      "help": "Wie oft der Projektstatus abgefragt wird",
+      "min": 5,
+      "sm": 12,
+      "md": 6
+    }
+  }
+}
