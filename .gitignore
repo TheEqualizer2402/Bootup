@@ -1,0 +1,21 @@
+# Abhängigkeiten - werden per npm install neu erzeugt, gehören nicht ins Repo
+node_modules/
+
+# npm-Logs
+npm-debug.log*
+package-lock.json.bak
+
+# Betriebssystem-Dateien
+.DS_Store
+Thumbs.db
+
+# Editor-/IDE-Einstellungen
+.vscode/
+.idea/
+*.swp
+
+# Von @iobroker/dev-server erzeugte lokale Testinstanz
+.dev-server/
+
+# Umgebungsvariablen / Secrets (falls du sowas später nutzt)
+.env
