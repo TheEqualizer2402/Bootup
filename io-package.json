@@ -1,8 +1,12 @@
 {
   "common": {
     "name": "bootup",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "news": {
+      "0.3.0": {
+        "en": "real-time updates via BootUp notifications (long-polling), full project poll now only as safety net",
+        "de": "Echtzeit-Updates über BootUp-Notifications (Long-Polling), voller Projekt-Poll nur noch als Sicherheitsnetz"
+      },
       "0.2.0": {
         "en": "clean display names in object tree (folders/channels), rounded thermostat temperatures",
         "de": "saubere Anzeigenamen im Objektbaum (Ordner/Kanäle), gerundete Thermostat-Temperaturen"

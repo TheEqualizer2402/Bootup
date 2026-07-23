@@ -1,6 +1,6 @@
 {
   "name": "iobroker.bootup",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "ioBroker Adapter für BootUp myHomeControl",
   "author": {
     "name": "Dein Name"

@@ -89,6 +89,15 @@ kannst - Änderungen am Code werden automatisch neu geladen.
 - Szenen (auslösen per Button-State)
 - WindowHandles, AlarmSystem, Occupancy (nur lesend)
 
+## Echtzeit-Updates (Notifications)
+
+Der Adapter abonniert beim Start automatisch die BootUp-Notifications im
+Long-Polling-Modus (kein Webhook, kein offener Port nötig). Zustandsänderungen
+werden dadurch nahezu in Echtzeit übernommen, statt erst beim nächsten
+Poll-Intervall. Der reguläre Voll-Abgleich (`pollInterval`) läuft weiterhin
+im Hintergrund als Sicherheitsnetz, falls die Notification-Verbindung mal
+unterbrochen sein sollte.
+
 ## Veröffentlichung als "richtiger" Adapter (optional, später)
 
 Falls du den Adapter auch offiziell im ioBroker-Adapter-Store anbieten

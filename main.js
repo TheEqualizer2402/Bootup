@@ -11,8 +11,12 @@ class Bootup extends utils.Adapter {
         });
 
         this.deviceIndex = {};   // stateId -> {guid, pathRef, controllerGuid?, type}
+        this.guidIndex = {};     // guid -> stateId (Umkehrindex, für eingehende Notifications)
         this.stateCache = {};    // stateId -> letzter bekannter Wert
         this.pollTimer = null;
+
+        this.subscriberId = null;      // aktuelle Notification-Subscription
+        this.notificationsActive = false; // Flag zum sauberen Beenden der Poll-Schleife beim Unload
 
         this.on('ready', this.onReady.bind(this));
         this.on('stateChange', this.onStateChange.bind(this));
@@ -33,13 +37,31 @@ class Bootup extends utils.Adapter {
         this.subscribeStates('*');
 
         await this.updateStatesFromProject();
+
+        // Vollabgleich als Sicherheitsnetz (falls Notifications mal ausfallen
+        // sollten) - läuft parallel zu den Notifications, daher reicht ein
+        // größeres Intervall als früher völlig aus.
         this.pollTimer = this.setInterval(() => this.updateStatesFromProject(), pollSeconds * 1000);
+
+        // Echtzeit-Updates per Long-Polling-Notifications starten (läuft im
+        // Hintergrund weiter, blockiert onReady nicht).
+        this.notificationsActive = true;
+        this.startNotifications();
     }
 
     onUnload(callback) {
         try {
+            this.notificationsActive = false;
             if (this.pollTimer) this.clearInterval(this.pollTimer);
-            callback();
+            if (this.subscriberId) {
+                // Best-effort Unsubscribe, damit BootUp die Subscriber-Resource
+                // sofort freigibt statt erst nach ~1h Timeout.
+                this.apiRequest('DELETE', `${this.basePath}/notifications/${this.subscriberId}/unsubscribe`)
+                    .catch(() => {}) // Fehler beim Abmelden sind unkritisch, Adapter wird sowieso beendet
+                    .finally(() => callback());
+            } else {
+                callback();
+            }
         } catch (e) {
             callback();
         }
@@ -47,7 +69,8 @@ class Bootup extends utils.Adapter {
 
     // ---- Generischer API-Call ------------------------------------------
     // query: Objekt mit Query-Parametern, z.B. {state: 'ON'} -> ?state=ON
-    apiRequest(method, path, query) {
+    // jsonBody: optionales Objekt, das als JSON-Body mitgeschickt wird (z.B. beim Subscribe)
+    apiRequest(method, path, query, jsonBody) {
         return new Promise((resolve, reject) => {
             let fullPath = path;
             if (query && Object.keys(query).length) {
@@ -56,6 +79,8 @@ class Bootup extends utils.Adapter {
                     .join('&');
                 fullPath += (path.includes('?') ? '&' : '?') + qs;
             }
+
+            const payload = jsonBody !== undefined ? JSON.stringify(jsonBody) : null;
 
             const options = {
                 hostname: this.host,
@@ -67,6 +92,9 @@ class Bootup extends utils.Adapter {
                     'Content-Type': 'application/json'
                 }
             };
+            if (payload) {
+                options.headers['Content-Length'] = Buffer.byteLength(payload);
+            }
 
             const req = https.request(options, res => {
                 let data = '';
@@ -79,12 +107,15 @@ class Bootup extends utils.Adapter {
                             resolve(data);
                         }
                     } else {
-                        reject(new Error(`HTTP ${res.statusCode} bei ${path}: ${data}`));
+                        const err = new Error(`HTTP ${res.statusCode} bei ${path}: ${data}`);
+                        err.statusCode = res.statusCode;
+                        reject(err);
                     }
                 });
             });
 
             req.on('error', reject);
+            if (payload) req.write(payload);
             req.end();
         });
     }
@@ -151,6 +182,7 @@ class Bootup extends utils.Adapter {
         await this.ensureChannel(baseId, device.Name);
 
         this.deviceIndex[baseId] = { guid, pathRef, type };
+        this.guidIndex[guid] = baseId;
 
         await this.ensureAndSetState(`${baseId}.guid`, guid, { name: 'Guid', type: 'string' });
 
@@ -257,6 +289,176 @@ class Bootup extends utils.Adapter {
             await this.setStateAsync('info.connection', { val: false, ack: true });
             this.log.error('Fehler beim Abrufen des Projekts: ' + err.message);
         }
+    }
+
+    // ---- Notifications (Long-Polling) --------------------------------
+    // POST /notifications/subscribe  Body: {callbackUrl: null}  -> {SubscriberId}
+    // callbackUrl=null aktiviert den Polling-Modus (kein Webhook, kein
+    // offener Port auf unserer Seite nötig).
+    async subscribeNotifications() {
+        const res = await this.apiRequest('POST', `${this.basePath}/notifications/subscribe`, null, { callbackUrl: null });
+        this.subscriberId = res && (res.SubscriberId || res.subscriberId);
+        if (!this.subscriberId) {
+            throw new Error('Subscribe-Antwort enthielt keine SubscriberId: ' + JSON.stringify(res));
+        }
+        this.log.info(`Notifications abonniert (SubscriberId: ${this.subscriberId}).`);
+    }
+
+    // Startet die Endlosschleife, die pending auf Notifications wartet.
+    // Läuft im Hintergrund, bis this.notificationsActive = false gesetzt wird.
+    async startNotifications() {
+        while (this.notificationsActive) {
+            try {
+                if (!this.subscriberId) {
+                    await this.subscribeNotifications();
+                }
+
+                const timeoutSec = 55; // < 60s Subscriber-Timeout laut Doku, konservativ gewählt
+                const path = `${this.basePath}/notifications/${this.subscriberId}`;
+                const result = await this.apiRequest('GET', path, { timeoutSec });
+
+                if (result) {
+                    await this.processNotifications(result);
+                }
+                // Sofort wieder in die nächste Wartephase - kein Sleep nötig,
+                // der GET-Call selbst blockiert ja schon bis zu timeoutSec Sekunden.
+            } catch (err) {
+                if (err.statusCode === 404) {
+                    // Subscriber ist abgelaufen/ungültig geworden -> neu abonnieren
+                    this.log.warn('Notification-Subscription abgelaufen, abonniere neu...');
+                    this.subscriberId = null;
+                } else {
+                    this.log.error('Fehler beim Warten auf Notifications: ' + err.message);
+                    // Kurze Pause, um bei dauerhaften Fehlern (z.B. Netzwerk down)
+                    // nicht in einer Endlosschleife die API zu fluten.
+                    await new Promise(resolve => this.setTimeout(resolve, 10000));
+                }
+            }
+        }
+    }
+
+    // Verarbeitet eine Notification-Antwort mit "Devices" und "Rooms" Arrays.
+    async processNotifications(result) {
+        for (const deviceNotification of result.Devices || []) {
+            await this.applyDeviceNotification(deviceNotification);
+        }
+        for (const roomNotification of result.Rooms || []) {
+            await this.applyRoomNotification(roomNotification);
+        }
+    }
+
+    async applyDeviceNotification(notification) {
+        const type = notification.NotificationType;
+        const state = notification.DeviceState;
+
+        if (type === 'DeviceCreated' || type === 'DeviceDeleted') {
+            // Struktur betroffen (neues Gerät / Gerät entfernt) - dafür reicht
+            // ein kompletter Neuaufbau des Baums am einfachsten und sichersten.
+            this.log.info(`Notification: ${type} (Guid: ${state && state.Guid}) - baue Baum neu auf.`);
+            await this.updateStatesFromProject();
+            return;
+        }
+
+        // DeviceStateChanged / DeviceStateUpdate: nur die betroffenen Werte aktualisieren
+        if (!state || !state.Guid) return;
+        const baseId = this.guidIndex[state.Guid];
+        if (!baseId) {
+            // Unbekanntes Gerät (z.B. Notification kam vor dem ersten
+            // vollständigen Projekt-Abgleich an) -> sicherheitshalber neu abgleichen
+            this.log.debug(`Notification für unbekanntes Gerät (Guid: ${state.Guid}) - baue Baum neu auf.`);
+            await this.updateStatesFromProject();
+            return;
+        }
+
+        await this.applyDeviceStateFields(baseId, state);
+    }
+
+    // Aktualisiert nur die State-Werte eines bereits bekannten Geräts
+    // (Objekte/Channels existieren schon, nur die Werte ändern sich).
+    async applyDeviceStateFields(baseId, state) {
+        const type = state.DeviceStateType || (this.deviceIndex[baseId] && this.deviceIndex[baseId].type);
+
+        switch (type) {
+            case 'DeviceStateThermostat':
+                if (state.TemperatureActual !== undefined) {
+                    await this.ensureAndSetState(`${baseId}.actual`, Bootup.roundTemp(state.TemperatureActual), {
+                        name: 'Ist-Temperatur', type: 'number', role: 'value.temperature', unit: '°C'
+                    });
+                }
+                if (state.TemperatureSetpoing !== undefined) {
+                    await this.ensureAndSetState(`${baseId}.setpoint`, Bootup.roundTemp(state.TemperatureSetpoing), {
+                        name: 'Soll-Temperatur', type: 'number', role: 'level.temperature', unit: '°C', write: true
+                    });
+                }
+                break;
+
+            case 'DeviceStateBlind':
+                if (state.State !== undefined) {
+                    await this.ensureAndSetState(`${baseId}.state`, state.State, {
+                        name: 'Zustand', type: 'string', role: 'text'
+                    });
+                }
+                if (state.Position !== undefined) {
+                    await this.ensureAndSetState(`${baseId}.position`, state.Position, {
+                        name: 'Position (%)', type: 'number', role: 'level.blind', unit: '%', write: true
+                    });
+                }
+                break;
+
+            case 'DeviceStateSwitch':
+                if (state.State !== undefined) {
+                    await this.ensureAndSetState(`${baseId}.state`, state.State === 'ON', {
+                        name: 'Zustand', type: 'boolean', role: 'switch', write: true
+                    });
+                }
+                break;
+
+            case 'DeviceStateWindowHandle':
+                if (state.State !== undefined) {
+                    await this.ensureAndSetState(`${baseId}.state`, state.State, {
+                        name: 'Fenstergriff', type: 'string', role: 'text'
+                    });
+                }
+                break;
+
+            case 'DeviceStateAlarmSystem':
+                if (state.State !== undefined) {
+                    await this.ensureAndSetState(`${baseId}.state`, state.State, {
+                        name: 'Alarmstatus', type: 'string', role: 'text'
+                    });
+                }
+                break;
+
+            case 'DeviceStateOccupancy':
+                if (state.State !== undefined) {
+                    await this.ensureAndSetState(`${baseId}.state`, state.State, {
+                        name: 'Präsenz', type: 'string', role: 'text'
+                    });
+                }
+                if (state.Brightness !== undefined) {
+                    await this.ensureAndSetState(`${baseId}.brightness`, state.Brightness, {
+                        name: 'Helligkeit', type: 'number', role: 'value.brightness'
+                    });
+                }
+                break;
+
+            default:
+                // Unbekannter/nicht separat behandelter Typ - sicherheitshalber
+                // kompletten Baum neu abgleichen, damit nichts verloren geht.
+                this.log.debug(`Notification mit unbekanntem DeviceStateType "${type}" - baue Baum neu auf.`);
+                await this.updateStatesFromProject();
+        }
+    }
+
+    async applyRoomNotification(notification) {
+        const type = notification.NotificationType;
+        const state = notification.RoomState;
+
+        // Räume/Etagen können neu angelegt, gelöscht oder umbenannt werden -
+        // dafür reicht ein kompletter Neuaufbau am einfachsten und sichersten,
+        // da sich sonst auch IDs verschieben könnten.
+        this.log.info(`Notification: ${type} (Raum/Etage: ${state && state.Name}) - baue Baum neu auf.`);
+        await this.updateStatesFromProject();
     }
 
     // ---- Zustand SETZEN -----------------------------------------------
