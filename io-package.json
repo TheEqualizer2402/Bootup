@@ -1,0 +1,80 @@
+{
+  "common": {
+    "name": "bootup",
+    "version": "0.2.0",
+    "news": {
+      "0.2.0": {
+        "en": "clean display names in object tree (folders/channels), rounded thermostat temperatures",
+        "de": "saubere Anzeigenamen im Objektbaum (Ordner/Kanäle), gerundete Thermostat-Temperaturen"
+      },
+      "0.1.0": {
+        "en": "initial release",
+        "de": "Erstveröffentlichung"
+      }
+    },
+    "title": "BootUp myHomeControl",
+    "titleLang": {
+      "en": "BootUp myHomeControl",
+      "de": "BootUp myHomeControl"
+    },
+    "desc": {
+      "en": "Connects ioBroker to the BootUp myHomeControl cloud API (switches, blinds, thermostats, scenes)",
+      "de": "Verbindet ioBroker mit der BootUp myHomeControl Cloud-API (Schalter, Jalousien, Thermostate, Szenen)"
+    },
+    "authors": [
+      "Dein Name <deine@email.example>"
+    ],
+    "keywords": ["bootup", "myhomecontrol", "smart home", "enocean"],
+    "license": "MIT",
+    "platform": "Javascript/Node.js",
+    "main": "main.js",
+    "icon": "bootup.png",
+    "enabled": true,
+    "extIcon": "",
+    "readme": "https://github.com/yourname/ioBroker.bootup/blob/main/README.md",
+    "loglevel": "info",
+    "mode": "daemon",
+    "type": "climate-control",
+    "compact": true,
+    "connectionType": "cloud",
+    "dataSource": "poll",
+    "adminUI": {
+      "config": "json"
+    },
+    "dependencies": [
+      {
+        "js-controller": ">=3.3.22"
+      }
+    ]
+  },
+  "native": {
+    "apiKey": "",
+    "host": "www.bootup.ch",
+    "basePath": "/mhccloudserver/api/v1",
+    "pollInterval": 60
+  },
+  "objects": [],
+  "instanceObjects": [
+    {
+      "_id": "info",
+      "type": "channel",
+      "common": {
+        "name": "Information"
+      },
+      "native": {}
+    },
+    {
+      "_id": "info.connection",
+      "type": "state",
+      "common": {
+        "role": "indicator.connected",
+        "name": "If connected to BootUp Cloud",
+        "type": "boolean",
+        "read": true,
+        "write": false,
+        "def": false
+      },
+      "native": {}
+    }
+  ]
+}
