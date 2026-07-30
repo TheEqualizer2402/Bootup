@@ -1,5 +1,6 @@
 {
   "type": "panel",
+  "i18n": false,
   "items": {
     "apiKey": {
       "type": "password",

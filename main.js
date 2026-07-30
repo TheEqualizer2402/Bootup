@@ -17,6 +17,8 @@ class Bootup extends utils.Adapter {
 
         this.subscriberId = null;      // aktuelle Notification-Subscription
         this.notificationsActive = false; // Flag zum sauberen Beenden der Poll-Schleife beim Unload
+        this.shuttingDown = false;        // verhindert DB-Zugriffe nach Beginn des Shutdowns
+        this.pendingNotificationReq = null; // laufender Long-Poll-Request, zum Abbrechen beim Unload
 
         this.on('ready', this.onReady.bind(this));
         this.on('stateChange', this.onStateChange.bind(this));
@@ -51,8 +53,21 @@ class Bootup extends utils.Adapter {
 
     onUnload(callback) {
         try {
+            // Sofort setzen, damit keine weiteren DB-Schreibzugriffe mehr
+            // versucht werden, auch wenn noch asynchrone Operationen laufen.
+            this.shuttingDown = true;
             this.notificationsActive = false;
+
             if (this.pollTimer) this.clearInterval(this.pollTimer);
+
+            // Laufenden Long-Poll-Request aktiv abbrechen, statt bis zu
+            // 55 Sekunden auf eine Antwort zu warten - vermeidet, dass eine
+            // verspätete Antwort nach Verbindungsschluss noch verarbeitet wird.
+            if (this.pendingNotificationReq) {
+                this.pendingNotificationReq.destroy();
+                this.pendingNotificationReq = null;
+            }
+
             if (this.subscriberId) {
                 // Best-effort Unsubscribe, damit BootUp die Subscriber-Resource
                 // sofort freigibt statt erst nach ~1h Timeout.
@@ -140,6 +155,8 @@ class Bootup extends utils.Adapter {
     }
 
     async ensureAndSetState(id, value, common) {
+        if (this.shuttingDown) return; // keine DB-Zugriffe mehr nach Beginn des Shutdowns
+
         await this.setObjectNotExistsAsync(id, {
             type: 'state',
             common: {
@@ -165,10 +182,12 @@ class Bootup extends utils.Adapter {
     // Sorgt für einen sauberen Anzeigenamen im Objektbaum (unabhängig von der
     // technischen ID, die z.B. bei Geräten ein GUID-Kürzel enthalten kann).
     async ensureFolder(id, name) {
+        if (this.shuttingDown) return;
         await this.extendObjectAsync(id, { type: 'folder', common: { name } });
     }
 
     async ensureChannel(id, name) {
+        if (this.shuttingDown) return;
         await this.extendObjectAsync(id, { type: 'channel', common: { name } });
     }
 
@@ -280,12 +299,15 @@ class Bootup extends utils.Adapter {
     }
 
     async updateStatesFromProject() {
+        if (this.shuttingDown) return;
         try {
             const project = await this.fetchProject();
+            if (this.shuttingDown) return; // Antwort kam erst nach Shutdown-Beginn
             const count = await this.processProject(project);
             await this.setStateAsync('info.connection', { val: true, ack: true });
             this.log.info(`${count} Geräte aktualisiert.`);
         } catch (err) {
+            if (this.shuttingDown) return;
             await this.setStateAsync('info.connection', { val: false, ack: true });
             this.log.error('Fehler beim Abrufen des Projekts: ' + err.message);
         }
@@ -304,6 +326,58 @@ class Bootup extends utils.Adapter {
         this.log.info(`Notifications abonniert (SubscriberId: ${this.subscriberId}).`);
     }
 
+    // Führt den blockierenden GET-Call für Notifications direkt aus (statt
+    // über die generische apiRequest()), damit wir das zugrundeliegende
+    // http-Request-Objekt referenzieren und beim Adapter-Stopp aktiv
+    // abbrechen können (statt bis zu timeoutSec Sekunden zu warten).
+    pendForNotifications(subscriberId, timeoutSec) {
+        return new Promise((resolve, reject) => {
+            const path = `${this.basePath}/notifications/${subscriberId}?timeoutSec=${timeoutSec}`;
+            const options = {
+                hostname: this.host,
+                path,
+                method: 'GET',
+                headers: {
+                    'X-API-KEY': this.config.apiKey,
+                    'Accept': 'application/json'
+                }
+            };
+
+            const req = https.request(options, res => {
+                let data = '';
+                res.on('data', chunk => (data += chunk));
+                res.on('end', () => {
+                    this.pendingNotificationReq = null;
+                    if (res.statusCode >= 200 && res.statusCode < 300) {
+                        try {
+                            resolve(data ? JSON.parse(data) : null);
+                        } catch (e) {
+                            resolve(null);
+                        }
+                    } else {
+                        const err = new Error(`HTTP ${res.statusCode} bei ${path}: ${data}`);
+                        err.statusCode = res.statusCode;
+                        reject(err);
+                    }
+                });
+            });
+
+            req.on('error', err => {
+                this.pendingNotificationReq = null;
+                // Beim absichtlichen Abbrechen (destroy() in onUnload) ist ein
+                // Fehler hier normal und erwartet - nicht als echten Fehler behandeln.
+                if (this.shuttingDown) {
+                    resolve(null);
+                } else {
+                    reject(err);
+                }
+            });
+
+            this.pendingNotificationReq = req;
+            req.end();
+        });
+    }
+
     // Startet die Endlosschleife, die pending auf Notifications wartet.
     // Läuft im Hintergrund, bis this.notificationsActive = false gesetzt wird.
     async startNotifications() {
@@ -314,8 +388,9 @@ class Bootup extends utils.Adapter {
                 }
 
                 const timeoutSec = 55; // < 60s Subscriber-Timeout laut Doku, konservativ gewählt
-                const path = `${this.basePath}/notifications/${this.subscriberId}`;
-                const result = await this.apiRequest('GET', path, { timeoutSec });
+                const result = await this.pendForNotifications(this.subscriberId, timeoutSec);
+
+                if (this.shuttingDown) return; // Antwort kam erst nach Shutdown-Beginn -> verwerfen
 
                 if (result) {
                     await this.processNotifications(result);
@@ -323,6 +398,8 @@ class Bootup extends utils.Adapter {
                 // Sofort wieder in die nächste Wartephase - kein Sleep nötig,
                 // der GET-Call selbst blockiert ja schon bis zu timeoutSec Sekunden.
             } catch (err) {
+                if (this.shuttingDown) return;
+
                 if (err.statusCode === 404) {
                     // Subscriber ist abgelaufen/ungültig geworden -> neu abonnieren
                     this.log.warn('Notification-Subscription abgelaufen, abonniere neu...');
