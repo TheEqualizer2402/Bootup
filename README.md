@@ -36,7 +36,7 @@ iobroker restart bootup.0
 | X-API-KEY | Dein geheimer BootUp-API-Schlüssel |
 | Verbindungsart | "Cloud" (BootUp-Server im Internet) oder "Lokal" (eigener Server im lokalen Netz) |
 | Host / API Base-Path | Nur bei Cloud-Verbindung, Standard: `www.bootup.ch` / `/mhccloudserver/api/v1` |
-| Lokale IP-Adresse / Port | Nur bei lokaler Verbindung, z.B. `192.168.1.50` / `4443` |
+| Lokale IP-Adresse / Port / Protokoll | Nur bei lokaler Verbindung, z.B. `192.168.1.50` / `4443` / `HTTP` (viele lokale Geräte sprechen reines HTTP) |
 | Abfrage-Intervall (Sekunden) | Sicherheitsnetz zusätzlich zu den Echtzeit-Notifications |
 
 **Hinweis zur lokalen Verbindung:** Der API-Pfad ist dabei fest auf `/v1`

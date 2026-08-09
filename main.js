@@ -2,6 +2,7 @@
 
 const utils = require('@iobroker/adapter-core');
 const https = require('https');
+const http = require('http');
 
 class Bootup extends utils.Adapter {
     constructor(options) {
@@ -46,12 +47,11 @@ class Bootup extends utils.Adapter {
             this.host = localHost;
             this.port = Number(this.config.localPort) > 0 ? Number(this.config.localPort) : 4443;
             this.basePath = '/v1'; // lokaler Dienst nutzt kürzeren Pfad ohne /mhccloudserver/api
-            this.rejectUnauthorized = false; // lokaler Dienst nutzt i.d.R. ein selbstsigniertes Zertifikat
-            // Manche eingebetteten Geräte (Gateways, Router etc.) haben eine
-            // minimale TLS-Implementierung, die mit TLS 1.3 nicht sauber
-            // umgehen kann. Node.js versucht standardmäßig zuerst TLS 1.3,
-            // was dort zu "wrong version number"-Fehlern führen kann. Daher
-            // hier auf max. TLS 1.2 begrenzen (deutlich kompatibler).
+            // Viele lokale Geräte/Gateways sprechen intern reines HTTP statt
+            // HTTPS - daher konfigurierbar, Standard ist HTTP.
+            this.protocol = (this.config.localProtocol || 'http').toLowerCase();
+            this.lib = this.protocol === 'https' ? https : http;
+            this.rejectUnauthorized = false; // falls doch HTTPS: lokaler Dienst nutzt i.d.R. ein selbstsigniertes Zertifikat
             this.minTlsVersion = 'TLSv1';
             this.maxTlsVersion = 'TLSv1.2';
 
@@ -63,13 +63,15 @@ class Bootup extends utils.Adapter {
             this.host = this.config.host || 'www.bootup.ch';
             this.port = 443;
             this.basePath = this.config.basePath || '/mhccloudserver/api/v1';
+            this.protocol = 'https';
+            this.lib = https;
             this.rejectUnauthorized = true; // Cloud nutzt ein gültiges, vertrauenswürdiges Zertifikat
             this.minTlsVersion = undefined; // Cloud: Standard-Mindestversion von Node.js verwenden
             this.maxTlsVersion = undefined; // Cloud: Standard-Höchstversion von Node.js verwenden (TLS 1.3)
         }
 
-        this.log.info(`Verbindung: ${connectionType === 'local' ? 'Lokal' : 'Cloud'} (${this.host}:${this.port}${this.basePath})`);
-        this.log.debug(`Verbindungsdetails: host="${this.host}" port=${this.port} rejectUnauthorized=${this.rejectUnauthorized}`);
+        this.log.info(`Verbindung: ${connectionType === 'local' ? 'Lokal' : 'Cloud'} (${this.protocol}://${this.host}:${this.port}${this.basePath})`);
+        this.log.debug(`Verbindungsdetails: protocol=${this.protocol} host="${this.host}" port=${this.port} rejectUnauthorized=${this.rejectUnauthorized}`);
 
         const pollSeconds = Number(this.config.pollInterval) > 0 ? Number(this.config.pollInterval) : 60;
 
@@ -139,20 +141,22 @@ class Bootup extends utils.Adapter {
                 port: this.port,
                 path: fullPath,
                 method,
-                rejectUnauthorized: this.rejectUnauthorized,
                 headers: {
                     'X-API-KEY': this.config.apiKey,
                     'Accept': 'application/json',
                     'Content-Type': 'application/json'
                 }
             };
-            if (this.minTlsVersion) options.minVersion = this.minTlsVersion;
-            if (this.maxTlsVersion) options.maxVersion = this.maxTlsVersion;
+            if (this.protocol === 'https') {
+                options.rejectUnauthorized = this.rejectUnauthorized;
+                if (this.minTlsVersion) options.minVersion = this.minTlsVersion;
+                if (this.maxTlsVersion) options.maxVersion = this.maxTlsVersion;
+            }
             if (payload) {
                 options.headers['Content-Length'] = Buffer.byteLength(payload);
             }
 
-            const req = https.request(options, res => {
+            const req = this.lib.request(options, res => {
                 let data = '';
                 res.on('data', chunk => (data += chunk));
                 res.on('end', () => {
@@ -454,16 +458,18 @@ class Bootup extends utils.Adapter {
                 port: this.port,
                 path,
                 method: 'GET',
-                rejectUnauthorized: this.rejectUnauthorized,
                 headers: {
                     'X-API-KEY': this.config.apiKey,
                     'Accept': 'application/json'
                 }
             };
-            if (this.minTlsVersion) options.minVersion = this.minTlsVersion;
-            if (this.maxTlsVersion) options.maxVersion = this.maxTlsVersion;
+            if (this.protocol === 'https') {
+                options.rejectUnauthorized = this.rejectUnauthorized;
+                if (this.minTlsVersion) options.minVersion = this.minTlsVersion;
+                if (this.maxTlsVersion) options.maxVersion = this.maxTlsVersion;
+            }
 
-            const req = https.request(options, res => {
+            const req = this.lib.request(options, res => {
                 let data = '';
                 res.on('data', chunk => (data += chunk));
                 res.on('end', () => {

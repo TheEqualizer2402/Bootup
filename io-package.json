@@ -1,8 +1,12 @@
 {
   "common": {
     "name": "bootup",
-    "version": "0.4.2",
+    "version": "0.5.0",
     "news": {
+      "0.5.0": {
+        "en": "added HTTP/HTTPS protocol selection for local connections (local gateway used plain HTTP)",
+        "de": "HTTP/HTTPS-Protokollauswahl für lokale Verbindungen hinzugefügt (lokales Gateway nutzte reines HTTP)"
+      },
       "0.4.2": {
         "en": "cap TLS to max version 1.2 for local connections (fixes 'wrong version number' errors with embedded devices)",
         "de": "TLS auf max. Version 1.2 für lokale Verbindungen begrenzt (behebt 'wrong version number'-Fehler bei eingebetteten Geräten)"
@@ -74,6 +78,7 @@
     "basePath": "/mhccloudserver/api/v1",
     "localHost": "",
     "localPort": 4443,
+    "localProtocol": "http",
     "pollInterval": 60
   },
   "objects": [],

@@ -60,7 +60,7 @@
       "newLine": true,
       "hidden": "data.connectionType !== 'local'",
       "sm": 12,
-      "md": 6
+      "md": 4
     },
     "localPort": {
       "type": "number",
@@ -68,11 +68,23 @@
       "help": "Standard: 4443",
       "hidden": "data.connectionType !== 'local'",
       "sm": 12,
-      "md": 6
+      "md": 4
+    },
+    "localProtocol": {
+      "type": "select",
+      "label": "Protokoll",
+      "help": "Viele lokale Geräte sprechen reines HTTP statt HTTPS",
+      "options": [
+        { "label": "HTTP", "value": "http" },
+        { "label": "HTTPS", "value": "https" }
+      ],
+      "hidden": "data.connectionType !== 'local'",
+      "sm": 12,
+      "md": 4
     },
     "_localNote": {
       "type": "staticText",
-      "text": "Hinweis: Für die lokale Verbindung wird ein selbstsigniertes Zertifikat akzeptiert (Zertifikatsprüfung wird für diese Verbindung deaktiviert). Der API-Pfad ist bei der lokalen Verbindung fest auf /v1 gesetzt.",
+      "text": "Hinweis: Bei HTTPS wird ein selbstsigniertes Zertifikat akzeptiert (Zertifikatsprüfung wird für diese Verbindung deaktiviert). Der API-Pfad ist bei der lokalen Verbindung fest auf /v1 gesetzt.",
       "newLine": true,
       "hidden": "data.connectionType !== 'local'",
       "sm": 12
