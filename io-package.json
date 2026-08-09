@@ -1,8 +1,12 @@
 {
   "common": {
     "name": "bootup",
-    "version": "0.3.1",
+    "version": "0.4.0",
     "news": {
+      "0.4.0": {
+        "en": "added toggle between cloud and local API connection (self-signed certificate support)",
+        "de": "Umschaltung zwischen Cloud- und lokaler API-Verbindung hinzugefügt (Unterstützung für selbstsignierte Zertifikate)"
+      },
       "0.3.1": {
         "en": "fixed invalid jsonConfig warning (missing i18n) and race condition causing errors on adapter restart",
         "de": "jsonConfig-Warnung (fehlendes i18n) und Race-Condition beim Adapter-Neustart behoben"
@@ -26,8 +30,8 @@
       "de": "BootUp myHomeControl"
     },
     "desc": {
-      "en": "Connects ioBroker to the BootUp myHomeControl cloud API (switches, blinds, thermostats, scenes)",
-      "de": "Verbindet ioBroker mit der BootUp myHomeControl Cloud-API (Schalter, Jalousien, Thermostate, Szenen)"
+      "en": "Connects ioBroker to the BootUp myHomeControl cloud or local API (switches, blinds, thermostats, scenes)",
+      "de": "Verbindet ioBroker mit der BootUp myHomeControl Cloud- oder lokalen API (Schalter, Jalousien, Thermostate, Szenen)"
     },
     "authors": [
       "Dein Name <deine@email.example>"
@@ -39,7 +43,7 @@
     "icon": "bootup.png",
     "enabled": true,
     "extIcon": "",
-    "readme": "https://github.com/yourname/ioBroker.bootup/blob/main/README.md",
+    "readme": "https://github.com/TheEqualizer2402/Bootup/blob/main/README.md",
     "loglevel": "info",
     "mode": "daemon",
     "type": "climate-control",
@@ -57,8 +61,11 @@
   },
   "native": {
     "apiKey": "",
+    "connectionType": "cloud",
     "host": "www.bootup.ch",
     "basePath": "/mhccloudserver/api/v1",
+    "localHost": "",
+    "localPort": 4443,
     "pollInterval": 60
   },
   "objects": [],

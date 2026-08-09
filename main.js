@@ -15,7 +15,7 @@ class Bootup extends utils.Adapter {
         this.stateCache = {};    // stateId -> letzter bekannter Wert
         this.pollTimer = null;
 
-        this.subscriberId = null;      // aktuelle Notification-Subscription
+        this.subscriberId = null;         // aktuelle Notification-Subscription
         this.notificationsActive = false; // Flag zum sauberen Beenden der Poll-Schleife beim Unload
         this.shuttingDown = false;        // verhindert DB-Zugriffe nach Beginn des Shutdowns
         this.pendingNotificationReq = null; // laufender Long-Poll-Request, zum Abbrechen beim Unload
@@ -32,8 +32,29 @@ class Bootup extends utils.Adapter {
             return;
         }
 
-        this.host = this.config.host || 'www.bootup.ch';
-        this.basePath = this.config.basePath || '/mhccloudserver/api/v1';
+        // Verbindungsart: Cloud (BootUp-Server im Internet) oder Lokal
+        // (eigener Server im lokalen Netz, meist mit selbstsigniertem Zertifikat).
+        const connectionType = this.config.connectionType || 'cloud';
+
+        if (connectionType === 'local') {
+            this.host = this.config.localHost;
+            this.port = Number(this.config.localPort) > 0 ? Number(this.config.localPort) : 4443;
+            this.basePath = '/v1'; // lokaler Dienst nutzt kürzeren Pfad ohne /mhccloudserver/api
+            this.rejectUnauthorized = false; // lokaler Dienst nutzt i.d.R. ein selbstsigniertes Zertifikat
+
+            if (!this.host) {
+                this.log.error('Verbindungsart "Lokal" ausgewählt, aber keine lokale Host-Adresse konfiguriert.');
+                return;
+            }
+        } else {
+            this.host = this.config.host || 'www.bootup.ch';
+            this.port = 443;
+            this.basePath = this.config.basePath || '/mhccloudserver/api/v1';
+            this.rejectUnauthorized = true; // Cloud nutzt ein gültiges, vertrauenswürdiges Zertifikat
+        }
+
+        this.log.info(`Verbindung: ${connectionType === 'local' ? 'Lokal' : 'Cloud'} (${this.host}:${this.port}${this.basePath})`);
+
         const pollSeconds = Number(this.config.pollInterval) > 0 ? Number(this.config.pollInterval) : 60;
 
         this.subscribeStates('*');
@@ -99,8 +120,10 @@ class Bootup extends utils.Adapter {
 
             const options = {
                 hostname: this.host,
+                port: this.port,
                 path: fullPath,
                 method,
+                rejectUnauthorized: this.rejectUnauthorized,
                 headers: {
                     'X-API-KEY': this.config.apiKey,
                     'Accept': 'application/json',
@@ -313,6 +336,81 @@ class Bootup extends utils.Adapter {
         }
     }
 
+    // ---- Zustand SETZEN -----------------------------------------------
+    // PATCH .../switches/{deviceId}?state=ON|OFF
+    // PATCH .../blinds/{deviceId}?position=<0-100|OPEN|CLOSE|STOP>
+    // PATCH .../thermostats/{deviceId}?temperaturesetpoint=<Grad>
+    // PATCH .../scenes/{sceneControllerId}/{sceneId}   (kein Query-Parameter)
+    setDeviceState(pathRef, guid, paramName, value) {
+        const path = `${this.basePath}/${pathRef}/${guid}`;
+        return this.apiRequest('PATCH', path, { [paramName]: value });
+    }
+
+    setSwitch(baseId, on) {
+        const info = this.deviceIndex[baseId];
+        if (!info) throw new Error(`Unbekannte Device-ID: ${baseId}`);
+        return this.setDeviceState(info.pathRef, info.guid, 'state', on ? 'ON' : 'OFF');
+    }
+
+    setBlindPosition(baseId, position) {
+        const info = this.deviceIndex[baseId];
+        if (!info) throw new Error(`Unbekannte Device-ID: ${baseId}`);
+        return this.setDeviceState(info.pathRef, info.guid, 'position', position);
+    }
+
+    setThermostatSetpoint(baseId, temperature) {
+        const info = this.deviceIndex[baseId];
+        if (!info) throw new Error(`Unbekannte Device-ID: ${baseId}`);
+        return this.setDeviceState(info.pathRef, info.guid, 'temperaturesetpoint', temperature);
+    }
+
+    triggerScene(baseId) {
+        const info = this.deviceIndex[baseId];
+        if (!info) throw new Error(`Unbekannte Device-ID: ${baseId}`);
+        const path = `${this.basePath}/scenes/${info.controllerGuid}/${info.guid}`;
+        return this.apiRequest('PATCH', path);
+    }
+
+    // ---- Auf State-Änderungen reagieren und an BootUp senden --------------
+    async onStateChange(id, state) {
+        if (!state) return; // State wurde gelöscht
+
+        const relId = id.replace(`${this.namespace}.`, '');
+
+        if (relId.startsWith('info.')) return; // eigene info.*-States ignorieren
+
+        this.log.debug(`State-Änderung empfangen: ${relId} = ${state.val} (ack=${state.ack})`);
+
+        if (state.ack) return; // nur auf "von außen" gesetzte Befehle reagieren
+
+        const suffix = relId.split('.').pop();
+
+        try {
+            if (suffix.startsWith('scene_')) {
+                this.log.info(`Löse Szene aus: ${relId}`);
+                await this.triggerScene(relId);
+            } else {
+                const baseId = relId.replace(/\.(state|position|setpoint)$/, '');
+                if (suffix === 'state' && typeof state.val === 'boolean') {
+                    this.log.info(`Setze Schalter ${baseId}: ${state.val}`);
+                    await this.setSwitch(baseId, state.val);
+                } else if (suffix === 'position') {
+                    this.log.info(`Setze Jalousie-Position ${baseId}: ${state.val}`);
+                    await this.setBlindPosition(baseId, state.val);
+                } else if (suffix === 'setpoint') {
+                    this.log.info(`Setze Solltemperatur ${baseId}: ${state.val}`);
+                    await this.setThermostatSetpoint(baseId, state.val);
+                } else {
+                    return; // kein bekannter schreibbarer Suffix
+                }
+            }
+            this.log.info(`${relId} erfolgreich an BootUp übermittelt.`);
+            await this.updateStatesFromProject();
+        } catch (err) {
+            this.log.error(`Fehler beim Schreiben von ${relId}: ` + err.message);
+        }
+    }
+
     // ---- Notifications (Long-Polling) --------------------------------
     // POST /notifications/subscribe  Body: {callbackUrl: null}  -> {SubscriberId}
     // callbackUrl=null aktiviert den Polling-Modus (kein Webhook, kein
@@ -335,8 +433,10 @@ class Bootup extends utils.Adapter {
             const path = `${this.basePath}/notifications/${subscriberId}?timeoutSec=${timeoutSec}`;
             const options = {
                 hostname: this.host,
+                port: this.port,
                 path,
                 method: 'GET',
+                rejectUnauthorized: this.rejectUnauthorized,
                 headers: {
                     'X-API-KEY': this.config.apiKey,
                     'Accept': 'application/json'
@@ -536,83 +636,6 @@ class Bootup extends utils.Adapter {
         // da sich sonst auch IDs verschieben könnten.
         this.log.info(`Notification: ${type} (Raum/Etage: ${state && state.Name}) - baue Baum neu auf.`);
         await this.updateStatesFromProject();
-    }
-
-    // ---- Zustand SETZEN -----------------------------------------------
-    // PATCH .../switches/{deviceId}?state=ON|OFF
-    // PATCH .../blinds/{deviceId}?position=<0-100|OPEN|CLOSE|STOP>
-    // PATCH .../thermostats/{deviceId}?temperaturesetpoint=<Grad>
-    // PATCH .../scenes/{sceneControllerId}/{sceneId}   (kein Query-Parameter)
-    setDeviceState(pathRef, guid, paramName, value) {
-        const path = `${this.basePath}/${pathRef}/${guid}`;
-        return this.apiRequest('PATCH', path, { [paramName]: value });
-    }
-
-    setSwitch(baseId, on) {
-        const info = this.deviceIndex[baseId];
-        if (!info) throw new Error(`Unbekannte Device-ID: ${baseId}`);
-        return this.setDeviceState(info.pathRef, info.guid, 'state', on ? 'ON' : 'OFF');
-    }
-
-    setBlindPosition(baseId, position) {
-        const info = this.deviceIndex[baseId];
-        if (!info) throw new Error(`Unbekannte Device-ID: ${baseId}`);
-        return this.setDeviceState(info.pathRef, info.guid, 'position', position);
-    }
-
-    setThermostatSetpoint(baseId, temperature) {
-        const info = this.deviceIndex[baseId];
-        if (!info) throw new Error(`Unbekannte Device-ID: ${baseId}`);
-        return this.setDeviceState(info.pathRef, info.guid, 'temperaturesetpoint', temperature);
-    }
-
-    triggerScene(baseId) {
-        const info = this.deviceIndex[baseId];
-        if (!info) throw new Error(`Unbekannte Device-ID: ${baseId}`);
-        const path = `${this.basePath}/scenes/${info.controllerGuid}/${info.guid}`;
-        return this.apiRequest('PATCH', path);
-    }
-
-    // ---- Auf State-Änderungen reagieren und an BootUp senden --------------
-    async onStateChange(id, state) {
-        if (!state) return; // State wurde gelöscht
-
-        // id kommt hier bereits ohne Adapter-Namespace-Präfix (z.B. "bootup.0."), sondern relativ
-        const relId = id.replace(`${this.namespace}.`, '');
-
-        // eigene info.*-States ignorieren
-        if (relId.startsWith('info.')) return;
-
-        this.log.debug(`State-Änderung empfangen: ${relId} = ${state.val} (ack=${state.ack})`);
-
-        if (state.ack) return; // nur auf "von außen" gesetzte Befehle reagieren
-
-        const suffix = relId.split('.').pop();
-
-        try {
-            if (suffix.startsWith('scene_')) {
-                this.log.info(`Löse Szene aus: ${relId}`);
-                await this.triggerScene(relId);
-            } else {
-                const baseId = relId.replace(/\.(state|position|setpoint)$/, '');
-                if (suffix === 'state' && typeof state.val === 'boolean') {
-                    this.log.info(`Setze Schalter ${baseId}: ${state.val}`);
-                    await this.setSwitch(baseId, state.val);
-                } else if (suffix === 'position') {
-                    this.log.info(`Setze Jalousie-Position ${baseId}: ${state.val}`);
-                    await this.setBlindPosition(baseId, state.val);
-                } else if (suffix === 'setpoint') {
-                    this.log.info(`Setze Solltemperatur ${baseId}: ${state.val}`);
-                    await this.setThermostatSetpoint(baseId, state.val);
-                } else {
-                    return; // kein bekannter schreibbarer Suffix
-                }
-            }
-            this.log.info(`${relId} erfolgreich an BootUp übermittelt.`);
-            await this.updateStatesFromProject();
-        } catch (err) {
-            this.log.error(`Fehler beim Schreiben von ${relId}: ` + err.message);
-        }
     }
 }
 

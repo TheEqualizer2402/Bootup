@@ -10,10 +10,31 @@
       "sm": 12,
       "md": 6
     },
+    "connectionType": {
+      "type": "select",
+      "label": "Verbindungsart",
+      "help": "Cloud = BootUp-Server im Internet, Lokal = eigener Server im lokalen Netz",
+      "options": [
+        { "label": "Cloud (www.bootup.ch)", "value": "cloud" },
+        { "label": "Lokal (eigener Server)", "value": "local" }
+      ],
+      "newLine": true,
+      "sm": 12,
+      "md": 6
+    },
+
+    "_cloudHeader": {
+      "type": "header",
+      "text": "Cloud-Verbindung",
+      "newLine": true,
+      "hidden": "data.connectionType !== 'cloud'"
+    },
     "host": {
       "type": "text",
       "label": "Host",
       "help": "z.B. www.bootup.ch",
+      "newLine": true,
+      "hidden": "data.connectionType !== 'cloud'",
       "sm": 12,
       "md": 6
     },
@@ -21,15 +42,48 @@
       "type": "text",
       "label": "API Base-Path",
       "help": "z.B. /mhccloudserver/api/v1",
-      "newLine": true,
+      "hidden": "data.connectionType !== 'cloud'",
       "sm": 12,
       "md": 6
     },
+
+    "_localHeader": {
+      "type": "header",
+      "text": "Lokale Verbindung",
+      "newLine": true,
+      "hidden": "data.connectionType !== 'local'"
+    },
+    "localHost": {
+      "type": "text",
+      "label": "Lokale IP-Adresse / Hostname",
+      "help": "z.B. 192.168.1.50",
+      "newLine": true,
+      "hidden": "data.connectionType !== 'local'",
+      "sm": 12,
+      "md": 6
+    },
+    "localPort": {
+      "type": "number",
+      "label": "Port",
+      "help": "Standard: 4443",
+      "hidden": "data.connectionType !== 'local'",
+      "sm": 12,
+      "md": 6
+    },
+    "_localNote": {
+      "type": "staticText",
+      "text": "Hinweis: Für die lokale Verbindung wird ein selbstsigniertes Zertifikat akzeptiert (Zertifikatsprüfung wird für diese Verbindung deaktiviert). Der API-Pfad ist bei der lokalen Verbindung fest auf /v1 gesetzt.",
+      "newLine": true,
+      "hidden": "data.connectionType !== 'local'",
+      "sm": 12
+    },
+
     "pollInterval": {
       "type": "number",
       "label": "Abfrage-Intervall (Sekunden)",
-      "help": "Wie oft der Projektstatus abgefragt wird",
+      "help": "Sicherheitsnetz zusätzlich zu den Echtzeit-Notifications - wie oft der komplette Projektstatus abgefragt wird",
       "min": 5,
+      "newLine": true,
       "sm": 12,
       "md": 6
     }
