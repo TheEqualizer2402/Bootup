@@ -1,8 +1,12 @@
 {
   "common": {
     "name": "bootup",
-    "version": "0.4.1",
+    "version": "0.4.2",
     "news": {
+      "0.4.2": {
+        "en": "cap TLS to max version 1.2 for local connections (fixes 'wrong version number' errors with embedded devices)",
+        "de": "TLS auf max. Version 1.2 für lokale Verbindungen begrenzt (behebt 'wrong version number'-Fehler bei eingebetteten Geräten)"
+      },
       "0.4.1": {
         "en": "fixed TLS errors on local connections (auto-strip accidental https:// prefix, lower minimum TLS version, added debug logging)",
         "de": "TLS-Fehler bei lokalen Verbindungen behoben (versehentliches https:// wird automatisch entfernt, niedrigere Mindest-TLS-Version, Debug-Logging ergänzt)"
