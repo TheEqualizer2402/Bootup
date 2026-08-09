@@ -1,8 +1,12 @@
 {
   "common": {
     "name": "bootup",
-    "version": "0.4.0",
+    "version": "0.4.1",
     "news": {
+      "0.4.1": {
+        "en": "fixed TLS errors on local connections (auto-strip accidental https:// prefix, lower minimum TLS version, added debug logging)",
+        "de": "TLS-Fehler bei lokalen Verbindungen behoben (versehentliches https:// wird automatisch entfernt, niedrigere Mindest-TLS-Version, Debug-Logging ergänzt)"
+      },
       "0.4.0": {
         "en": "added toggle between cloud and local API connection (self-signed certificate support)",
         "de": "Umschaltung zwischen Cloud- und lokaler API-Verbindung hinzugefügt (Unterstützung für selbstsignierte Zertifikate)"

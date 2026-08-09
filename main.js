@@ -37,10 +37,17 @@ class Bootup extends utils.Adapter {
         const connectionType = this.config.connectionType || 'cloud';
 
         if (connectionType === 'local') {
-            this.host = this.config.localHost;
+            // Häufiger Stolperstein: falls versehentlich "https://" oder ein
+            // Pfad mit im Feld steht, hier automatisch bereinigen, statt mit
+            // einem kryptischen TLS-Fehler zu scheitern.
+            let localHost = (this.config.localHost || '').trim();
+            localHost = localHost.replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
+
+            this.host = localHost;
             this.port = Number(this.config.localPort) > 0 ? Number(this.config.localPort) : 4443;
             this.basePath = '/v1'; // lokaler Dienst nutzt kürzeren Pfad ohne /mhccloudserver/api
             this.rejectUnauthorized = false; // lokaler Dienst nutzt i.d.R. ein selbstsigniertes Zertifikat
+            this.minTlsVersion = 'TLSv1'; // manche lokalen Geräte sprechen nur ältere TLS-Versionen
 
             if (!this.host) {
                 this.log.error('Verbindungsart "Lokal" ausgewählt, aber keine lokale Host-Adresse konfiguriert.');
@@ -51,9 +58,11 @@ class Bootup extends utils.Adapter {
             this.port = 443;
             this.basePath = this.config.basePath || '/mhccloudserver/api/v1';
             this.rejectUnauthorized = true; // Cloud nutzt ein gültiges, vertrauenswürdiges Zertifikat
+            this.minTlsVersion = undefined; // Cloud: Standard-Mindestversion von Node.js verwenden
         }
 
         this.log.info(`Verbindung: ${connectionType === 'local' ? 'Lokal' : 'Cloud'} (${this.host}:${this.port}${this.basePath})`);
+        this.log.debug(`Verbindungsdetails: host="${this.host}" port=${this.port} rejectUnauthorized=${this.rejectUnauthorized}`);
 
         const pollSeconds = Number(this.config.pollInterval) > 0 ? Number(this.config.pollInterval) : 60;
 
@@ -130,6 +139,7 @@ class Bootup extends utils.Adapter {
                     'Content-Type': 'application/json'
                 }
             };
+            if (this.minTlsVersion) options.minVersion = this.minTlsVersion;
             if (payload) {
                 options.headers['Content-Length'] = Buffer.byteLength(payload);
             }
@@ -442,6 +452,7 @@ class Bootup extends utils.Adapter {
                     'Accept': 'application/json'
                 }
             };
+            if (this.minTlsVersion) options.minVersion = this.minTlsVersion;
 
             const req = https.request(options, res => {
                 let data = '';
