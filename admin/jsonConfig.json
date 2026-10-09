@@ -98,6 +98,45 @@
       "newLine": true,
       "sm": 12,
       "md": 6
+    },
+
+    "_webHeader": {
+      "type": "header",
+      "text": "iPhone-Web-App",
+      "newLine": true
+    },
+    "webEnabled": {
+      "type": "checkbox",
+      "label": "Web-App aktivieren",
+      "help": "Stellt im lokalen Netz eine Bedien-Oberfläche bereit, die du auf dem iPhone öffnen und zum Home-Bildschirm hinzufügen kannst",
+      "newLine": true,
+      "sm": 12,
+      "md": 6
+    },
+    "webPort": {
+      "type": "number",
+      "label": "Port der Web-App",
+      "help": "Standard: 8095 (muss frei sein)",
+      "min": 1024,
+      "max": 65535,
+      "hidden": "!data.webEnabled",
+      "sm": 12,
+      "md": 3
+    },
+    "webToken": {
+      "type": "password",
+      "label": "Zugangs-Token",
+      "help": "Pflicht, mind. 8 Zeichen - wird beim ersten Öffnen der App abgefragt. Ohne Token startet die Web-App nicht.",
+      "hidden": "!data.webEnabled",
+      "sm": 12,
+      "md": 3
+    },
+    "_webNote": {
+      "type": "staticText",
+      "text": "Die Web-App ist nur für das lokale Netz gedacht (unverschlüsseltes HTTP). Für Zugriff von unterwegs bitte ein VPN (z.B. WireGuard) nutzen und den Port NICHT direkt ins Internet freigeben.",
+      "newLine": true,
+      "hidden": "!data.webEnabled",
+      "sm": 12
     }
   }
 }

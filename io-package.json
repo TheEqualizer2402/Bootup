@@ -1,35 +1,39 @@
 {
   "common": {
     "name": "bootup",
-    "version": "0.5.0",
+    "version": "0.6.0",
     "news": {
+      "0.6.0": {
+        "en": "added iPhone web app (PWA) to monitor and control devices, served by the adapter with token protection and live updates",
+        "de": "iPhone-Web-App (PWA) zum Überwachen und Steuern der Geräte hinzugefügt, vom Adapter ausgeliefert mit Token-Schutz und Live-Updates"
+      },
       "0.5.0": {
         "en": "added HTTP/HTTPS protocol selection for local connections (local gateway used plain HTTP)",
         "de": "HTTP/HTTPS-Protokollauswahl für lokale Verbindungen hinzugefügt (lokales Gateway nutzte reines HTTP)"
       },
       "0.4.2": {
-        "en": "cap TLS to max version 1.2 for local connections (fixes 'wrong version number' errors with embedded devices)",
-        "de": "TLS auf max. Version 1.2 für lokale Verbindungen begrenzt (behebt 'wrong version number'-Fehler bei eingebetteten Geräten)"
+        "en": "cap TLS to max version 1.2 for local connections",
+        "de": "TLS auf max. Version 1.2 für lokale Verbindungen begrenzt"
       },
       "0.4.1": {
-        "en": "fixed TLS errors on local connections (auto-strip accidental https:// prefix, lower minimum TLS version, added debug logging)",
-        "de": "TLS-Fehler bei lokalen Verbindungen behoben (versehentliches https:// wird automatisch entfernt, niedrigere Mindest-TLS-Version, Debug-Logging ergänzt)"
+        "en": "fixed TLS errors on local connections (auto-strip accidental https:// prefix, debug logging)",
+        "de": "TLS-Fehler bei lokalen Verbindungen behoben (versehentliches https:// wird entfernt, Debug-Logging)"
       },
       "0.4.0": {
-        "en": "added toggle between cloud and local API connection (self-signed certificate support)",
-        "de": "Umschaltung zwischen Cloud- und lokaler API-Verbindung hinzugefügt (Unterstützung für selbstsignierte Zertifikate)"
+        "en": "added toggle between cloud and local API connection",
+        "de": "Umschaltung zwischen Cloud- und lokaler API-Verbindung hinzugefügt"
       },
       "0.3.1": {
-        "en": "fixed invalid jsonConfig warning (missing i18n) and race condition causing errors on adapter restart",
-        "de": "jsonConfig-Warnung (fehlendes i18n) und Race-Condition beim Adapter-Neustart behoben"
+        "en": "fixed invalid jsonConfig warning and race condition on adapter restart",
+        "de": "jsonConfig-Warnung und Race-Condition beim Adapter-Neustart behoben"
       },
       "0.3.0": {
-        "en": "real-time updates via BootUp notifications (long-polling), full project poll now only as safety net",
-        "de": "Echtzeit-Updates über BootUp-Notifications (Long-Polling), voller Projekt-Poll nur noch als Sicherheitsnetz"
+        "en": "real-time updates via BootUp notifications (long-polling)",
+        "de": "Echtzeit-Updates über BootUp-Notifications (Long-Polling)"
       },
       "0.2.0": {
-        "en": "clean display names in object tree (folders/channels), rounded thermostat temperatures",
-        "de": "saubere Anzeigenamen im Objektbaum (Ordner/Kanäle), gerundete Thermostat-Temperaturen"
+        "en": "clean display names in object tree, rounded thermostat temperatures",
+        "de": "saubere Anzeigenamen im Objektbaum, gerundete Thermostat-Temperaturen"
       },
       "0.1.0": {
         "en": "initial release",
@@ -42,8 +46,8 @@
       "de": "BootUp myHomeControl"
     },
     "desc": {
-      "en": "Connects ioBroker to the BootUp myHomeControl cloud or local API (switches, blinds, thermostats, scenes)",
-      "de": "Verbindet ioBroker mit der BootUp myHomeControl Cloud- oder lokalen API (Schalter, Jalousien, Thermostate, Szenen)"
+      "en": "Connects ioBroker to the BootUp myHomeControl cloud or local API (switches, blinds, thermostats, scenes) and provides an iPhone web app",
+      "de": "Verbindet ioBroker mit der BootUp myHomeControl Cloud- oder lokalen API (Schalter, Jalousien, Thermostate, Szenen) und stellt eine iPhone-Web-App bereit"
     },
     "authors": [
       "Dein Name <deine@email.example>"
@@ -79,7 +83,10 @@
     "localHost": "",
     "localPort": 4443,
     "localProtocol": "http",
-    "pollInterval": 60
+    "pollInterval": 60,
+    "webEnabled": false,
+    "webPort": 8095,
+    "webToken": ""
   },
   "objects": [],
   "instanceObjects": [

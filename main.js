@@ -3,6 +3,10 @@
 const utils = require('@iobroker/adapter-core');
 const https = require('https');
 const http = require('http');
+const WebServer = require('./lib/webserver');
+
+// Felder, die intern gespeichert, aber nicht an die Web-App gemeldet werden
+const HIDDEN_FIELDS = new Set(['guid', 'raw']);
 
 class Bootup extends utils.Adapter {
     constructor(options) {
@@ -15,6 +19,15 @@ class Bootup extends utils.Adapter {
         this.guidIndex = {};     // guid -> stateId (Umkehrindex, für eingehende Notifications)
         this.stateCache = {};    // stateId -> letzter bekannter Wert
         this.pollTimer = null;
+
+        // Modell für die Web-App
+        this.projectName = '';
+        this.tree = [];          // [{name, rooms:[{name, devices:[baseId]}]}]
+        this.deviceMeta = {};    // baseId -> {name, type, scenes:[{id,name}]}
+        this.deviceValues = {};  // baseId -> {feld: wert}
+        this.connected = false;
+        this.treeSignature = '';
+        this.webServer = null;
 
         this.subscriberId = null;         // aktuelle Notification-Subscription
         this.notificationsActive = false; // Flag zum sauberen Beenden der Poll-Schleife beim Unload
@@ -39,8 +52,7 @@ class Bootup extends utils.Adapter {
 
         if (connectionType === 'local') {
             // Häufiger Stolperstein: falls versehentlich "https://" oder ein
-            // Pfad mit im Feld steht, hier automatisch bereinigen, statt mit
-            // einem kryptischen TLS-Fehler zu scheitern.
+            // Pfad mit im Feld steht, hier automatisch bereinigen.
             let localHost = (this.config.localHost || '').trim();
             localHost = localHost.replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
 
@@ -51,7 +63,7 @@ class Bootup extends utils.Adapter {
             // HTTPS - daher konfigurierbar, Standard ist HTTP.
             this.protocol = (this.config.localProtocol || 'http').toLowerCase();
             this.lib = this.protocol === 'https' ? https : http;
-            this.rejectUnauthorized = false; // falls doch HTTPS: lokaler Dienst nutzt i.d.R. ein selbstsigniertes Zertifikat
+            this.rejectUnauthorized = false; // falls doch HTTPS: i.d.R. selbstsigniertes Zertifikat
             this.minTlsVersion = 'TLSv1';
             this.maxTlsVersion = 'TLSv1.2';
 
@@ -66,8 +78,8 @@ class Bootup extends utils.Adapter {
             this.protocol = 'https';
             this.lib = https;
             this.rejectUnauthorized = true; // Cloud nutzt ein gültiges, vertrauenswürdiges Zertifikat
-            this.minTlsVersion = undefined; // Cloud: Standard-Mindestversion von Node.js verwenden
-            this.maxTlsVersion = undefined; // Cloud: Standard-Höchstversion von Node.js verwenden (TLS 1.3)
+            this.minTlsVersion = undefined;
+            this.maxTlsVersion = undefined;
         }
 
         this.log.info(`Verbindung: ${connectionType === 'local' ? 'Lokal' : 'Cloud'} (${this.protocol}://${this.host}:${this.port}${this.basePath})`);
@@ -79,9 +91,11 @@ class Bootup extends utils.Adapter {
 
         await this.updateStatesFromProject();
 
+        // Web-App (iPhone) starten, falls aktiviert
+        this.startWebApp();
+
         // Vollabgleich als Sicherheitsnetz (falls Notifications mal ausfallen
-        // sollten) - läuft parallel zu den Notifications, daher reicht ein
-        // größeres Intervall als früher völlig aus.
+        // sollten) - läuft parallel zu den Notifications.
         this.pollTimer = this.setInterval(() => this.updateStatesFromProject(), pollSeconds * 1000);
 
         // Echtzeit-Updates per Long-Polling-Notifications starten (läuft im
@@ -99,9 +113,13 @@ class Bootup extends utils.Adapter {
 
             if (this.pollTimer) this.clearInterval(this.pollTimer);
 
+            if (this.webServer) {
+                this.webServer.stop();
+                this.webServer = null;
+            }
+
             // Laufenden Long-Poll-Request aktiv abbrechen, statt bis zu
-            // 55 Sekunden auf eine Antwort zu warten - vermeidet, dass eine
-            // verspätete Antwort nach Verbindungsschluss noch verarbeitet wird.
+            // 55 Sekunden auf eine Antwort zu warten.
             if (this.pendingNotificationReq) {
                 this.pendingNotificationReq.destroy();
                 this.pendingNotificationReq = null;
@@ -111,7 +129,7 @@ class Bootup extends utils.Adapter {
                 // Best-effort Unsubscribe, damit BootUp die Subscriber-Resource
                 // sofort freigibt statt erst nach ~1h Timeout.
                 this.apiRequest('DELETE', `${this.basePath}/notifications/${this.subscriberId}/unsubscribe`)
-                    .catch(() => {}) // Fehler beim Abmelden sind unkritisch, Adapter wird sowieso beendet
+                    .catch(() => {}) // Fehler beim Abmelden sind unkritisch
                     .finally(() => callback());
             } else {
                 callback();
@@ -119,6 +137,125 @@ class Bootup extends utils.Adapter {
         } catch (e) {
             callback();
         }
+    }
+
+    // ---- Web-App (iPhone) ------------------------------------------------
+    startWebApp() {
+        if (!this.config.webEnabled) return;
+
+        const token = String(this.config.webToken || '');
+        if (token.length < 8) {
+            this.log.error('Web-App ist aktiviert, aber das Zugangs-Token fehlt oder ist kürzer als 8 Zeichen. ' +
+                'Web-App wird aus Sicherheitsgründen NICHT gestartet. Bitte in den Instanz-Einstellungen ein Token setzen.');
+            return;
+        }
+
+        const port = Number(this.config.webPort) > 0 ? Number(this.config.webPort) : 8095;
+
+        try {
+            this.webServer = new WebServer(this, {
+                getSnapshot: () => this.getSnapshot(),
+                executeCommand: cmd => this.executeCommand(cmd)
+            }, { port, token });
+            this.webServer.start();
+        } catch (err) {
+            this.log.error('Web-App konnte nicht gestartet werden: ' + err.message);
+            this.webServer = null;
+        }
+    }
+
+    // Beschreibt ein Gerät für die Web-App
+    describeDevice(id) {
+        const meta = this.deviceMeta[id] || {};
+        const values = {};
+        for (const [field, value] of Object.entries(this.deviceValues[id] || {})) {
+            if (HIDDEN_FIELDS.has(field) || field.startsWith('scene_')) continue;
+            values[field] = value;
+        }
+        const dev = { id, name: meta.name || id, type: meta.type || 'unknown', values };
+        if (meta.scenes && meta.scenes.length) dev.scenes = meta.scenes;
+        return dev;
+    }
+
+    getSnapshot() {
+        return {
+            project: this.projectName,
+            connected: this.connected,
+            floors: this.tree.map(f => ({
+                name: f.name,
+                rooms: f.rooms.map(r => ({
+                    name: r.name,
+                    devices: r.devices.map(id => this.describeDevice(id))
+                }))
+            }))
+        };
+    }
+
+    // Befehl aus der Web-App ausführen. Alle Eingaben werden strikt geprüft,
+    // da die Web-App von außerhalb des Adapters erreichbar ist.
+    async executeCommand(cmd) {
+        const bad = msg => Object.assign(new Error(msg), { status: 400 });
+
+        if (!cmd || typeof cmd !== 'object') throw bad('Ungültiger Befehl');
+        const { device, field } = cmd;
+        if (typeof device !== 'string' || !Object.prototype.hasOwnProperty.call(this.deviceMeta, device)) {
+            throw bad('Unbekanntes Gerät');
+        }
+        const meta = this.deviceMeta[device];
+
+        let action;
+        switch (field) {
+            case 'state': {
+                if (meta.type !== 'DeviceStateSwitch') throw bad('Gerät ist kein Schalter');
+                if (typeof cmd.value !== 'boolean') throw bad('Wert muss true oder false sein');
+                this.log.info(`Web-App: Schalter "${meta.name}" -> ${cmd.value ? 'EIN' : 'AUS'}`);
+                action = () => this.setSwitch(device, cmd.value);
+                break;
+            }
+            case 'position': {
+                if (meta.type !== 'DeviceStateBlind') throw bad('Gerät ist keine Jalousie');
+                const v = cmd.value;
+                const isNum = typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 100;
+                const isWord = typeof v === 'string' && ['OPEN', 'CLOSE', 'STOP'].includes(v);
+                if (!isNum && !isWord) throw bad('Position muss 0-100 oder OPEN/CLOSE/STOP sein');
+                const value = isNum ? Math.round(v) : v;
+                this.log.info(`Web-App: Jalousie "${meta.name}" -> ${value}`);
+                action = () => this.setBlindPosition(device, value);
+                break;
+            }
+            case 'setpoint': {
+                if (meta.type !== 'DeviceStateThermostat') throw bad('Gerät ist kein Thermostat');
+                const v = cmd.value;
+                if (typeof v !== 'number' || !Number.isFinite(v) || v < 5 || v > 30) {
+                    throw bad('Solltemperatur muss zwischen 5 und 30 °C liegen');
+                }
+                const value = Math.round(v * 10) / 10;
+                this.log.info(`Web-App: Solltemperatur "${meta.name}" -> ${value} °C`);
+                action = () => this.setThermostatSetpoint(device, value);
+                break;
+            }
+            case 'scene': {
+                if (meta.type !== 'DeviceStateSceneController') throw bad('Gerät ist kein Szenen-Controller');
+                const sceneId = cmd.scene;
+                const known = (meta.scenes || []).find(s => s.id === sceneId);
+                if (!known) throw bad('Unbekannte Szene');
+                this.log.info(`Web-App: Szene "${known.name}" (${meta.name}) ausgelöst`);
+                action = () => this.triggerScene(sceneId);
+                break;
+            }
+            default:
+                throw bad('Unbekanntes Feld');
+        }
+
+        try {
+            await action();
+        } catch (err) {
+            this.log.error(`Web-App-Befehl an BootUp fehlgeschlagen: ${err.message}`);
+            throw Object.assign(new Error('Befehl konnte nicht an BootUp gesendet werden'), { status: 502 });
+        }
+
+        // Neuen Zustand nachziehen (Notifications liefern ihn meist ohnehin schon)
+        this.setTimeout(() => this.updateStatesFromProject(), 1500);
     }
 
     // ---- Generischer API-Call ------------------------------------------
@@ -216,10 +353,21 @@ class Bootup extends utils.Adapter {
         });
 
         const prev = this.stateCache[id];
-        if (prev !== undefined && prev !== value) {
+        const changed = prev !== value;
+        if (prev !== undefined && changed) {
             this.log.info(`Zustandsänderung "${common.name || id}" (${id}): ${prev} -> ${value}`);
         }
         this.stateCache[id] = value;
+
+        // Wert für die Web-App merken und Änderungen live weitergeben
+        const dot = id.lastIndexOf('.');
+        const baseId = id.slice(0, dot);
+        const field = id.slice(dot + 1);
+        if (!this.deviceValues[baseId]) this.deviceValues[baseId] = {};
+        this.deviceValues[baseId][field] = value;
+        if (changed && prev !== undefined && this.webServer && !HIDDEN_FIELDS.has(field) && !field.startsWith('scene_')) {
+            this.webServer.broadcast({ type: 'value', device: baseId, field, value });
+        }
 
         await this.setStateAsync(id, { val: value, ack: true });
     }
@@ -247,6 +395,7 @@ class Bootup extends utils.Adapter {
 
         this.deviceIndex[baseId] = { guid, pathRef, type };
         this.guidIndex[guid] = baseId;
+        this.deviceMeta[baseId] = { name: device.Name, type, scenes: [] };
 
         await this.ensureAndSetState(`${baseId}.guid`, guid, { name: 'Guid', type: 'string' });
 
@@ -307,6 +456,7 @@ class Bootup extends utils.Adapter {
                         pathRef: scene.PathRef,
                         type: 'DeviceStateScene'
                     };
+                    this.deviceMeta[baseId].scenes.push({ id: sceneId, name: scene.Name });
                     await this.ensureAndSetState(sceneId, false, {
                         name: scene.Name, type: 'boolean', role: 'button', write: true
                     });
@@ -323,24 +473,56 @@ class Bootup extends utils.Adapter {
     // ---- Projektbaum (Floors/Rooms/Devices) rekursiv durchlaufen ----------
     async processProject(project) {
         let count = 0;
+        const tree = [];
+        this.projectName = project.Name || '';
+
         for (const floor of project.Floors || []) {
             const floorName = Bootup.sanitize(floor.Name);
             await this.ensureFolder(floorName, floor.Name);
+            const floorEntry = { name: floor.Name, rooms: [] };
 
-            for (const room of floor.Rooms || []) {
+            // Geräte direkt an der Etage (ohne Raum) in einem Sammelraum führen
+            const rooms = [...(floor.Rooms || [])];
+            if ((floor.Devices || []).length) {
+                rooms.push({ Name: 'Allgemein', Devices: floor.Devices });
+            }
+
+            for (const room of rooms) {
                 const roomName = Bootup.sanitize(room.Name);
                 const roomId = `${floorName}.${roomName}`;
                 await this.ensureFolder(roomId, room.Name);
+                const roomEntry = { name: room.Name, devices: [] };
 
                 for (const device of room.Devices || []) {
                     const devName = Bootup.sanitize(device.Name) + '_' + device.Guid.slice(0, 8);
                     const baseId = `${roomId}.${devName}`;
                     await this.processDevice(device, baseId);
+                    roomEntry.devices.push(baseId);
                     count++;
                 }
+                floorEntry.rooms.push(roomEntry);
             }
+            tree.push(floorEntry);
         }
+
+        this.tree = tree;
+
+        // Hat sich die Struktur geändert (Geräte/Räume hinzugefügt, entfernt,
+        // umbenannt), die Web-App zum Neuladen auffordern.
+        const signature = JSON.stringify(tree);
+        if (this.treeSignature && signature !== this.treeSignature && this.webServer) {
+            this.webServer.broadcast({ type: 'structure' });
+        }
+        this.treeSignature = signature;
+
         return count;
+    }
+
+    setConnected(connected) {
+        if (this.connected !== connected) {
+            this.connected = connected;
+            if (this.webServer) this.webServer.broadcast({ type: 'connection', connected });
+        }
     }
 
     async updateStatesFromProject() {
@@ -349,10 +531,12 @@ class Bootup extends utils.Adapter {
             const project = await this.fetchProject();
             if (this.shuttingDown) return; // Antwort kam erst nach Shutdown-Beginn
             const count = await this.processProject(project);
+            this.setConnected(true);
             await this.setStateAsync('info.connection', { val: true, ack: true });
             this.log.info(`${count} Geräte aktualisiert.`);
         } catch (err) {
             if (this.shuttingDown) return;
+            this.setConnected(false);
             await this.setStateAsync('info.connection', { val: false, ack: true });
             this.log.error('Fehler beim Abrufen des Projekts: ' + err.message);
         }
@@ -446,10 +630,8 @@ class Bootup extends utils.Adapter {
         this.log.info(`Notifications abonniert (SubscriberId: ${this.subscriberId}).`);
     }
 
-    // Führt den blockierenden GET-Call für Notifications direkt aus (statt
-    // über die generische apiRequest()), damit wir das zugrundeliegende
-    // http-Request-Objekt referenzieren und beim Adapter-Stopp aktiv
-    // abbrechen können (statt bis zu timeoutSec Sekunden zu warten).
+    // Führt den blockierenden GET-Call für Notifications direkt aus, damit wir
+    // das Request-Objekt beim Adapter-Stopp aktiv abbrechen können.
     pendForNotifications(subscriberId, timeoutSec) {
         return new Promise((resolve, reject) => {
             const path = `${this.basePath}/notifications/${subscriberId}?timeoutSec=${timeoutSec}`;
@@ -491,7 +673,7 @@ class Bootup extends utils.Adapter {
             req.on('error', err => {
                 this.pendingNotificationReq = null;
                 // Beim absichtlichen Abbrechen (destroy() in onUnload) ist ein
-                // Fehler hier normal und erwartet - nicht als echten Fehler behandeln.
+                // Fehler hier normal und erwartet.
                 if (this.shuttingDown) {
                     resolve(null);
                 } else {
@@ -505,7 +687,6 @@ class Bootup extends utils.Adapter {
     }
 
     // Startet die Endlosschleife, die pending auf Notifications wartet.
-    // Läuft im Hintergrund, bis this.notificationsActive = false gesetzt wird.
     async startNotifications() {
         while (this.notificationsActive) {
             try {
@@ -513,7 +694,7 @@ class Bootup extends utils.Adapter {
                     await this.subscribeNotifications();
                 }
 
-                const timeoutSec = 55; // < 60s Subscriber-Timeout laut Doku, konservativ gewählt
+                const timeoutSec = 55; // < 60s Subscriber-Timeout laut Doku
                 const result = await this.pendForNotifications(this.subscriberId, timeoutSec);
 
                 if (this.shuttingDown) return; // Antwort kam erst nach Shutdown-Beginn -> verwerfen
@@ -521,8 +702,6 @@ class Bootup extends utils.Adapter {
                 if (result) {
                     await this.processNotifications(result);
                 }
-                // Sofort wieder in die nächste Wartephase - kein Sleep nötig,
-                // der GET-Call selbst blockiert ja schon bis zu timeoutSec Sekunden.
             } catch (err) {
                 if (this.shuttingDown) return;
 
@@ -532,8 +711,7 @@ class Bootup extends utils.Adapter {
                     this.subscriberId = null;
                 } else {
                     this.log.error('Fehler beim Warten auf Notifications: ' + err.message);
-                    // Kurze Pause, um bei dauerhaften Fehlern (z.B. Netzwerk down)
-                    // nicht in einer Endlosschleife die API zu fluten.
+                    // Kurze Pause, um bei dauerhaften Fehlern nicht die API zu fluten.
                     await new Promise(resolve => this.setTimeout(resolve, 10000));
                 }
             }
@@ -555,8 +733,6 @@ class Bootup extends utils.Adapter {
         const state = notification.DeviceState;
 
         if (type === 'DeviceCreated' || type === 'DeviceDeleted') {
-            // Struktur betroffen (neues Gerät / Gerät entfernt) - dafür reicht
-            // ein kompletter Neuaufbau des Baums am einfachsten und sichersten.
             this.log.info(`Notification: ${type} (Guid: ${state && state.Guid}) - baue Baum neu auf.`);
             await this.updateStatesFromProject();
             return;
@@ -566,8 +742,6 @@ class Bootup extends utils.Adapter {
         if (!state || !state.Guid) return;
         const baseId = this.guidIndex[state.Guid];
         if (!baseId) {
-            // Unbekanntes Gerät (z.B. Notification kam vor dem ersten
-            // vollständigen Projekt-Abgleich an) -> sicherheitshalber neu abgleichen
             this.log.debug(`Notification für unbekanntes Gerät (Guid: ${state.Guid}) - baue Baum neu auf.`);
             await this.updateStatesFromProject();
             return;
@@ -577,7 +751,6 @@ class Bootup extends utils.Adapter {
     }
 
     // Aktualisiert nur die State-Werte eines bereits bekannten Geräts
-    // (Objekte/Channels existieren schon, nur die Werte ändern sich).
     async applyDeviceStateFields(baseId, state) {
         const type = state.DeviceStateType || (this.deviceIndex[baseId] && this.deviceIndex[baseId].type);
 
@@ -646,8 +819,6 @@ class Bootup extends utils.Adapter {
                 break;
 
             default:
-                // Unbekannter/nicht separat behandelter Typ - sicherheitshalber
-                // kompletten Baum neu abgleichen, damit nichts verloren geht.
                 this.log.debug(`Notification mit unbekanntem DeviceStateType "${type}" - baue Baum neu auf.`);
                 await this.updateStatesFromProject();
         }
@@ -658,8 +829,7 @@ class Bootup extends utils.Adapter {
         const state = notification.RoomState;
 
         // Räume/Etagen können neu angelegt, gelöscht oder umbenannt werden -
-        // dafür reicht ein kompletter Neuaufbau am einfachsten und sichersten,
-        // da sich sonst auch IDs verschieben könnten.
+        // dafür reicht ein kompletter Neuaufbau am einfachsten und sichersten.
         this.log.info(`Notification: ${type} (Raum/Etage: ${state && state.Name}) - baue Baum neu auf.`);
         await this.updateStatesFromProject();
     }

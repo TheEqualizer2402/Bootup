@@ -1,75 +1,68 @@
 # ioBroker.bootup
 
-Verbindet ioBroker mit der BootUp myHomeControl API (Cloud oder lokal).
+ioBroker-Adapter für das **BootUp myHomeControl** SmartHome-System (Cloud- oder lokale REST-API) mit integrierter **iPhone-Web-App**.
 
-## Workflow: GitHub als zentrale Codebasis
+## Funktionen
 
-Dieses Projekt wird über ein GitHub-Repository verwaltet. Der Server, auf
-dem ioBroker läuft, zieht sich den Code direkt von dort per `npm install`
-(Git-URL) - es müssen keine Dateien mehr manuell per ZIP kopiert werden.
+- Lesen und Schreiben: Schalter, Jalousien, Thermostate, Szenen
+- Lesen: Fenstergriffe, Alarmanlage, Anwesenheit/Bewegung
+- Echtzeit-Updates über BootUp-Notifications (Long-Polling)
+- Umschaltung Cloud / lokal (HTTP oder HTTPS)
+- iPhone-Web-App (PWA) zum Überwachen und Steuern, direkt vom Adapter ausgeliefert
 
-### Einmalige Ersteinrichtung auf dem ioBroker-Server
+## Installation / Update
+
+Als Benutzer `iobroker` auf dem Server:
 
 ```bash
 cd /opt/iobroker
 npm install https://github.com/TheEqualizer2402/Bootup.git --production
 iobroker upload bootup
-iobroker add bootup
-```
-
-Danach über die Admin-Oberfläche die Instanz `bootup.0` konfigurieren
-(siehe Abschnitt "Konfiguration" unten) und starten.
-
-### Bei jedem künftigen Update
-
-```bash
-cd /opt/iobroker
-npm install https://github.com/TheEqualizer2402/Bootup.git --production
-iobroker upload bootup          # nur nötig, falls sich admin/jsonConfig.json geändert hat
 iobroker restart bootup.0
 ```
 
 ## Konfiguration
 
-| Feld | Beschreibung |
+| Einstellung | Bedeutung |
 |---|---|
-| X-API-KEY | Dein geheimer BootUp-API-Schlüssel |
-| Verbindungsart | "Cloud" (BootUp-Server im Internet) oder "Lokal" (eigener Server im lokalen Netz) |
-| Host / API Base-Path | Nur bei Cloud-Verbindung, Standard: `www.bootup.ch` / `/mhccloudserver/api/v1` |
-| Lokale IP-Adresse / Port / Protokoll | Nur bei lokaler Verbindung, z.B. `192.168.1.50` / `4443` / `HTTP` (viele lokale Geräte sprechen reines HTTP) |
-| Abfrage-Intervall (Sekunden) | Sicherheitsnetz zusätzlich zu den Echtzeit-Notifications |
+| API-Key | BootUp-API-Schlüssel (`X-API-KEY`) |
+| Verbindungsart | Cloud oder lokal |
+| Cloud-Host / Basis-Pfad | Standard: `www.bootup.ch`, `/mhccloudserver/api/v1` |
+| Lokale IP / Port / Protokoll | z. B. `192.168.178.35`, `4443`, `http` |
+| Abfrageintervall | Sekunden für den vollständigen Abgleich |
+| Web-App aktivieren | Startet den Web-Server der iPhone-App |
+| Web-App-Port | Standard `8095` |
+| Web-App-Token | Pflicht, mindestens 8 Zeichen (Passwort für die App) |
 
-**Hinweis zur lokalen Verbindung:** Der API-Pfad ist dabei fest auf `/v1`
-gesetzt (kürzer als der Cloud-Pfad). Da lokale Server meist ein
-selbstsigniertes Zertifikat verwenden, wird die Zertifikatsprüfung für
-diese Verbindung automatisch deaktiviert.
+## iPhone-App einrichten
 
-## Unterstützte Gerätetypen
+1. In den Instanzeinstellungen **Web-App aktivieren**, einen **Token** (mind. 8 Zeichen) und ggf. den Port setzen, speichern.
+2. Auf dem iPhone in **Safari** `http://<server-ip>:8095/` öffnen und den Token eingeben.
+3. **Teilen → Zum Home-Bildschirm**. Die App startet danach wie eine normale App.
 
-- Switches (lesen + schreiben)
-- Blinds / Jalousien (lesen + schreiben, Position 0-100 oder OPEN/CLOSE/STOP)
-- Thermostate (lesen + schreiben der Solltemperatur)
-- Szenen (auslösen per Button-State)
-- WindowHandles, AlarmSystem, Occupancy (nur lesend)
+Die App zeigt Etagen und Räume, eine Übersicht (Alarmanlage, offene Fenster, Bewegung, eingeschaltete Geräte, Jalousien) und aktualisiert sich live.
 
-## Echtzeit-Updates (Notifications)
+## Sicherheit
 
-Der Adapter abonniert beim Start automatisch die BootUp-Notifications im
-Long-Polling-Modus (kein Webhook, kein offener Port nötig). Zustandsänderungen
-werden dadurch nahezu in Echtzeit übernommen, statt erst beim nächsten
-Poll-Intervall. Der reguläre Voll-Abgleich (`pollInterval`) läuft weiterhin
-im Hintergrund als Sicherheitsnetz, falls die Notification-Verbindung mal
-unterbrochen sein sollte.
+- Der Web-Server startet nur mit gesetztem Token (mind. 8 Zeichen).
+- Token-Vergleich zeitkonstant, Sperre pro IP nach 10 Fehlversuchen (10 Minuten).
+- Strenge Eingabeprüfung der Befehle, strikte Content-Security-Policy, keine Fremdquellen.
+- Die App läuft per **HTTP im lokalen Netz**. Den Port **nicht** ins Internet weiterleiten. Für Zugriff von unterwegs ein VPN (z. B. WireGuard) verwenden.
 
-## Installation zum Testen (lokal, ohne npm-Veröffentlichung)
+## Datenpunkte
 
-```bash
-cd iobroker.bootup
-npm install
-npx @iobroker/dev-server setup
-npx @iobroker/dev-server watch
-```
+Unter `bootup.0.<Etage>.<Raum>.<Gerät>` (Name statt ID, die ID steht in `native`). Änderungen an beschreibbaren Datenpunkten (ack=false) werden an BootUp gesendet.
 
-Startet eine lokale ioBroker-Admin-Oberfläche (Standard:
-http://localhost:8081), in der du den Adapter direkt konfigurieren und
-testen kannst - Änderungen am Code werden automatisch neu geladen.
+## Changelog
+
+### 0.6.0
+- iPhone-Web-App (PWA) mit Token-Schutz und Live-Updates
+
+### 0.5.0
+- HTTP/HTTPS-Auswahl für lokale Verbindung
+
+Frühere Versionen siehe `io-package.json`.
+
+## Lizenz
+
+MIT
