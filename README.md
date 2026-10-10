@@ -42,6 +42,16 @@ iobroker restart bootup.0
 
 Die App zeigt Etagen und Räume, eine Übersicht (Alarmanlage, offene Fenster, Bewegung, eingeschaltete Geräte, Jalousien) und aktualisiert sich live.
 
+## Aussehen anpassen
+
+In der App oben rechts auf **⚙︎** tippen:
+
+- **Darstellung**: Titel, Hell/Dunkel/Automatisch, Akzentfarbe, Dichte (Normal/Kompakt)
+- **Seiten**: Übersicht und Favoriten ein-/ausblenden; einzelne Kacheln und Listen der Übersicht wählen
+- **Etagen, Räume & Geräte**: aufklappen, Namen antippen zum Umbenennen (leer = Originalname), **Sichtbar/Versteckt**, ▲▼ zum Sortieren, ★ Favorit, Symbol wählen
+
+Änderungen werden sofort angewendet und im Adapter gespeichert (State `info.webConfig`, Teil der ioBroker-Sicherung). Alle iPhones sehen dieselbe Darstellung und werden live aktualisiert. Die Original-Namen in ioBroker/BootUp bleiben unverändert. Versteckte Geräte sind nur ausgeblendet, nicht gesperrt.
+
 ## Sicherheit
 
 - Der Web-Server startet nur mit gesetztem Token (mind. 8 Zeichen).
@@ -54,6 +64,9 @@ Die App zeigt Etagen und Räume, eine Übersicht (Alarmanlage, offene Fenster, B
 Unter `bootup.0.<Etage>.<Raum>.<Gerät>` (Name statt ID, die ID steht in `native`). Änderungen an beschreibbaren Datenpunkten (ack=false) werden an BootUp gesendet.
 
 ## Changelog
+
+### 0.7.0
+- Web-App: Etagen, Räume und Geräte ausblenden, umbenennen und sortieren; Favoriten, Symbole, Design, Akzentfarbe, kompakte Ansicht
 
 ### 0.6.0
 - iPhone-Web-App (PWA) mit Token-Schutz und Live-Updates

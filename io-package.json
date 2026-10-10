@@ -1,8 +1,12 @@
 {
   "common": {
     "name": "bootup",
-    "version": "0.6.0",
+    "version": "0.7.0",
     "news": {
+      "0.7.0": {
+        "en": "web app: configurable appearance (hide/rename/reorder floors, rooms and devices, favorites, icons, theme, accent color, compact mode), synced across devices",
+        "de": "Web-App: konfigurierbares Aussehen (Etagen, Räume und Geräte ausblenden/umbenennen/sortieren, Favoriten, Symbole, Design, Akzentfarbe, kompakte Ansicht), auf allen Geräten synchron"
+      },
       "0.6.0": {
         "en": "added iPhone web app (PWA) to monitor and control devices, served by the adapter with token protection and live updates",
         "de": "iPhone-Web-App (PWA) zum Überwachen und Steuern der Geräte hinzugefügt, vom Adapter ausgeliefert mit Token-Schutz und Live-Updates"

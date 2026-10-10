@@ -4,6 +4,7 @@ const utils = require('@iobroker/adapter-core');
 const https = require('https');
 const http = require('http');
 const WebServer = require('./lib/webserver');
+const { sanitizeConfig } = require('./lib/webconfig');
 
 // Felder, die intern gespeichert, aber nicht an die Web-App gemeldet werden
 const HIDDEN_FIELDS = new Set(['guid', 'raw']);
@@ -28,6 +29,7 @@ class Bootup extends utils.Adapter {
         this.connected = false;
         this.treeSignature = '';
         this.webServer = null;
+        this.webConfig = sanitizeConfig(null); // Darstellung der Web-App
 
         this.subscriberId = null;         // aktuelle Notification-Subscription
         this.notificationsActive = false; // Flag zum sauberen Beenden der Poll-Schleife beim Unload
@@ -92,7 +94,7 @@ class Bootup extends utils.Adapter {
         await this.updateStatesFromProject();
 
         // Web-App (iPhone) starten, falls aktiviert
-        this.startWebApp();
+        await this.startWebApp();
 
         // Vollabgleich als Sicherheitsnetz (falls Notifications mal ausfallen
         // sollten) - läuft parallel zu den Notifications.
@@ -140,7 +142,7 @@ class Bootup extends utils.Adapter {
     }
 
     // ---- Web-App (iPhone) ------------------------------------------------
-    startWebApp() {
+    async startWebApp() {
         if (!this.config.webEnabled) return;
 
         const token = String(this.config.webToken || '');
@@ -153,15 +155,48 @@ class Bootup extends utils.Adapter {
         const port = Number(this.config.webPort) > 0 ? Number(this.config.webPort) : 8095;
 
         try {
+            await this.loadWebConfig();
             this.webServer = new WebServer(this, {
                 getSnapshot: () => this.getSnapshot(),
-                executeCommand: cmd => this.executeCommand(cmd)
+                executeCommand: cmd => this.executeCommand(cmd),
+                saveConfig: (cfg, by) => this.saveWebConfig(cfg, by)
             }, { port, token });
             this.webServer.start();
         } catch (err) {
             this.log.error('Web-App konnte nicht gestartet werden: ' + err.message);
             this.webServer = null;
         }
+    }
+
+    // Darstellung der Web-App (Namen, Sichtbarkeit, Reihenfolge, Design) wird
+    // als JSON im State info.webConfig gespeichert (Teil der ioBroker-Sicherung).
+    async loadWebConfig() {
+        await this.setObjectNotExistsAsync('info.webConfig', {
+            type: 'state',
+            common: { name: 'Web-App Darstellung (JSON)', type: 'string', role: 'json', read: true, write: false, def: '' },
+            native: {}
+        });
+        const st = await this.getStateAsync('info.webConfig');
+        if (st && typeof st.val === 'string' && st.val) {
+            try {
+                this.webConfig = sanitizeConfig(JSON.parse(st.val));
+            } catch (e) {
+                this.log.warn('info.webConfig enthält kein gültiges JSON - Standarddarstellung wird verwendet.');
+            }
+        }
+    }
+
+    async saveWebConfig(input, by) {
+        if (this.shuttingDown) throw Object.assign(new Error('Adapter wird beendet'), { status: 503 });
+        if (!input || typeof input !== 'object' || Array.isArray(input)) {
+            throw Object.assign(new Error('Ungültige Konfiguration'), { status: 400 });
+        }
+        const cfg = sanitizeConfig(input);
+        const json = JSON.stringify(cfg);
+        await this.setStateAsync('info.webConfig', { val: json, ack: true });
+        this.webConfig = cfg;
+        if (this.webServer) this.webServer.broadcast({ type: 'config', config: cfg, by: typeof by === 'string' ? by : '' });
+        return cfg;
     }
 
     // Beschreibt ein Gerät für die Web-App
@@ -181,6 +216,7 @@ class Bootup extends utils.Adapter {
         return {
             project: this.projectName,
             connected: this.connected,
+            config: this.webConfig,
             floors: this.tree.map(f => ({
                 name: f.name,
                 rooms: f.rooms.map(r => ({
