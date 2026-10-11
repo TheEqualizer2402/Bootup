@@ -30,6 +30,7 @@ iobroker restart bootup.0
 | Cloud-Host / Basis-Pfad | Standard: `www.bootup.ch`, `/mhccloudserver/api/v1` |
 | Lokale IP / Port / Protokoll | z. B. `192.168.178.35`, `4443`, `http` |
 | Abfrageintervall | Sekunden für den vollständigen Abgleich |
+| Anstellzeit Jalousien (ms) | So lange fährt die Jalousie bei den Tasten "Anstellen" der App, danach Stopp (100–10000, Standard 1200) |
 | Web-App aktivieren | Startet den Web-Server der iPhone-App |
 | Web-App-Port | Standard `8095` |
 | Web-App-Token | Pflicht, mindestens 8 Zeichen (Passwort für die App) |
@@ -40,7 +41,10 @@ iobroker restart bootup.0
 2. Auf dem iPhone in **Safari** `http://<server-ip>:8095/` öffnen und den Token eingeben.
 3. **Teilen → Zum Home-Bildschirm**. Die App startet danach wie eine normale App.
 
-Die App zeigt Etagen und Räume, eine Übersicht (Alarmanlage, offene Fenster, Bewegung, eingeschaltete Geräte, Jalousien) und aktualisiert sich live.
+Die App zeigt Etagen und Räume, eine Übersicht (Alarmanlage, offene Fenster, Bewegung, eingeschaltete Geräte, Jalousien mit Prozent geschlossen, Temperaturen) und aktualisiert sich live.
+
+- **Jalousien**: Auf / Stopp / Zu, Schieberegler und zwei Tasten **Anstellen** (kurz auf bzw. ab, dann automatisch Stopp; Dauer = Anstellzeit der Instanz).
+- **Thermostate**: Ist- und Solltemperatur werden nur angezeigt; Sollwerte lassen sich in der App nicht ändern.
 
 ## Aussehen anpassen
 
@@ -64,6 +68,12 @@ In der App oben rechts auf **⚙︎** tippen:
 Unter `bootup.0.<Etage>.<Raum>.<Gerät>` (Name statt ID, die ID steht in `native`). Änderungen an beschreibbaren Datenpunkten (ack=false) werden an BootUp gesendet.
 
 ## Changelog
+
+### 0.8.0
+- Thermostat-Sollwerte in der App nur Anzeige
+- Jalousien: Anstell-Tasten mit einstellbarer Zeit (Instanzkonfiguration)
+- Übersicht: Jalousien mit Prozent geschlossen statt Kachel "Jalousien offen"
+- Einstellungen: Alles auf-/zuklappen, alle Geräte eines Raums verstecken/zeigen
 
 ### 0.7.0
 - Web-App: Etagen, Räume und Geräte ausblenden, umbenennen und sortieren; Favoriten, Symbole, Design, Akzentfarbe, kompakte Ansicht

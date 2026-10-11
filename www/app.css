@@ -258,3 +258,10 @@ body.compact .toggle[aria-checked="true"]::after { transform: translateX(18px); 
 .picker { border-radius: 8px; overflow: hidden; cursor: pointer; }
 .picker::-webkit-color-swatch-wrapper { padding: 0; }
 .picker::-webkit-color-swatch { border: 0; border-radius: 8px; }
+
+/* Jalousie: Anstell-Tasten, Übersicht */
+.btn-row.nudge { margin-top: 8px; }
+.btn-row.bulk { margin: 0 0 10px; }
+.blind-row .bar { height: 6px; border-radius: 3px; background: var(--card-2); margin-top: 8px; overflow: hidden; }
+.blind-row .bar-fill { height: 100%; background: var(--accent); border-radius: 3px; }
+.blind-val { text-align: right; flex: none; min-width: 84px; }

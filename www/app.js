@@ -39,7 +39,6 @@
         sseUp: false,
         hadError: false,
         busy: new Set(),          // Geräte, die gerade bedient werden (kein Neuzeichnen)
-        pendingSetpoint: new Map(),
         netError: false,
         mainDirty: false
     };
@@ -117,8 +116,8 @@
     function emptyCfg() {
         return {
             title: '', theme: 'auto', accent: '', density: 'normal', showOverview: true, showFavorites: true,
-            tiles: { alarm: true, windows: true, motion: true, lights: true, blinds: true },
-            lists: { windows: true, motion: true, lights: true, temps: true },
+            tiles: { alarm: true, windows: true, motion: true, lights: true },
+            lists: { windows: true, motion: true, lights: true, blinds: true, temps: true },
             floors: {}, rooms: {}, devices: {}, order: { floors: [], rooms: {}, devices: {} }
         };
     }
@@ -538,6 +537,17 @@
 
         const cmd = (value, msg) => async () => { try { await send({ device: dev.id, field: 'position', value }, msg); } catch (e) { /* Toast */ } };
 
+        // Anstellen: kurz fahren und stoppen; Dauer und Stopp übernimmt der Adapter
+        const nudge = (dir, label) => {
+            const btn = h('button', { class: 'btn', text: label });
+            btn.addEventListener('click', async () => {
+                btn.disabled = true;
+                try { await send({ device: dev.id, field: 'nudge', value: dir }); } catch (e) { /* Toast */ }
+                btn.disabled = false;
+            });
+            return btn;
+        };
+
         return h('div', { class: 'card', 'data-id': dev.id },
             head(dev.icon || '▤', dev.name, h('span', { class: 'badge', text: blindText(dev.values.state) })),
             h('div', { class: 'card-body' },
@@ -545,36 +555,20 @@
                 h('div', { class: 'btn-row' },
                     h('button', { class: 'btn', text: '▲ Auf', onclick: cmd('OPEN') }),
                     h('button', { class: 'btn', text: '■ Stopp', onclick: cmd('STOP') }),
-                    h('button', { class: 'btn', text: '▼ Zu', onclick: cmd('CLOSE') }))));
+                    h('button', { class: 'btn', text: '▼ Zu', onclick: cmd('CLOSE') })),
+                h('div', { class: 'btn-row nudge' },
+                    nudge('UP', '▲ Anstellen'),
+                    nudge('DOWN', '▼ Anstellen'))));
     }
 
+    // Thermostat: Ist- und Solltemperatur nur zur Anzeige (Sollwert ist in der App nicht änderbar)
     function thermostatCard(dev) {
-        const actual = dev.values.actual;
-        const setpoint = S.pendingSetpoint.has(dev.id) ? S.pendingSetpoint.get(dev.id) : dev.values.setpoint;
-        const setEl = h('div', { class: 'set', text: 'Soll ' + fmtTemp(setpoint) });
-        let timer = null;
-
-        const step = delta => () => {
-            const base = S.pendingSetpoint.has(dev.id) ? S.pendingSetpoint.get(dev.id) : (typeof dev.values.setpoint === 'number' ? dev.values.setpoint : 20);
-            const next = Math.min(30, Math.max(5, Math.round((base + delta) * 2) / 2));
-            S.pendingSetpoint.set(dev.id, next);
-            S.busy.add(dev.id);
-            setEl.textContent = 'Soll ' + fmtTemp(next);
-            clearTimeout(timer);
-            timer = setTimeout(async () => {
-                try { await send({ device: dev.id, field: 'setpoint', value: next }, `Soll ${fmtTemp(next)}`); } catch (e) { /* Toast */ }
-                S.pendingSetpoint.delete(dev.id);
-                S.busy.delete(dev.id);
-                setTimeout(() => updateCard(dev.id), 1500);
-            }, 800);
-        };
-
         return h('div', { class: 'card', 'data-id': dev.id },
             head(dev.icon || '🌡️', dev.name),
             h('div', { class: 'card-body thermo' },
-                h('button', { class: 'btn step', text: '−', 'aria-label': 'Kälter', onclick: step(-0.5) }),
-                h('div', { class: 'temp' }, h('div', { class: 'big', text: fmtTemp(actual) }), setEl),
-                h('button', { class: 'btn step', text: '+', 'aria-label': 'Wärmer', onclick: step(0.5) })));
+                h('div', { class: 'temp' },
+                    h('div', { class: 'big', text: fmtTemp(dev.values.actual) }),
+                    h('div', { class: 'set', text: 'Soll ' + fmtTemp(dev.values.setpoint) }))));
     }
 
     function windowCard(dev) {
@@ -619,7 +613,7 @@
         const windows = of('DeviceStateWindowHandle').filter(e => ['OPEN', 'TILT'].includes(e.dev.values.state));
         const motion = of('DeviceStateOccupancy').filter(e => occupancyInfo(e.dev.values.state).active);
         const lightsOn = of('DeviceStateSwitch').filter(e => e.dev.values.state === true);
-        const blindsOpen = of('DeviceStateBlind').filter(e => e.dev.values.state !== 'CLOSED');
+        const blinds = of('DeviceStateBlind');
         const thermostats = of('DeviceStateThermostat');
 
         const tile = (label, value, cls, wide) => h('div', { class: 'tile' + (wide ? ' wide' : '') },
@@ -631,8 +625,7 @@
             T.alarm && alarms.length ? tile('Alarmanlage', alarms.map(a => alarmText(a.dev.values.state)).join(' · '), 'ok', true) : null,
             T.windows ? tile('Fenster offen', windows.length ? String(windows.length) : 'Alle zu', windows.length ? 'bad' : 'ok') : null,
             T.motion ? tile('Bewegung', motion.length ? String(motion.length) : 'Keine', motion.length ? 'warn' : '') : null,
-            T.lights ? tile('Eingeschaltet', String(lightsOn.length), '') : null,
-            T.blinds ? tile('Jalousien offen', String(blindsOpen.length), '') : null);
+            T.lights ? tile('Eingeschaltet', String(lightsOn.length), '') : null);
 
         const out = [];
         if (tiles.childElementCount) out.push(tiles);
@@ -652,6 +645,22 @@
         }));
         if (L.motion && motion.length) section('Bewegung erkannt', motion.map(e => row(e, h('span', { class: 'badge warn', text: occupancyInfo(e.dev.values.state).text }))));
         if (L.lights && lightsOn.length) section('Eingeschaltet', lightsOn.map(e => row(e, switchToggle(e.dev))));
+        if (L.blinds && blinds.length) {
+            const closed = e => (typeof e.dev.values.position === 'number' ? e.dev.values.position : null);
+            section('Jalousien', blinds.map(e => {
+                const pos = closed(e);
+                const bar = h('div', { class: 'bar' }, h('div', { class: 'bar-fill' }));
+                bar.firstChild.style.width = (pos === null ? 0 : pos) + '%';
+                return h('div', { class: 'row blind-row' },
+                    h('div', { class: 'grow' },
+                        h('div', { class: 'name', text: e.dev.name }),
+                        h('div', { class: 'where', text: where(e) }),
+                        bar),
+                    h('div', { class: 'blind-val' },
+                        h('div', { class: 'val', text: pos === null ? '–' : pos + ' %' }),
+                        h('div', { class: 'where', text: pos === null ? blindText(e.dev.values.state) : (pos === 0 ? 'Offen' : pos === 100 ? 'Geschlossen' : 'geschlossen') })));
+            }));
+        }
         if (L.temps && thermostats.length) section('Temperaturen', thermostats.map(e => h('div', { class: 'row' },
             h('div', { class: 'grow' }, h('div', { class: 'name', text: e.room }), h('div', { class: 'where', text: `${e.floor} · Soll ${fmtTemp(e.dev.values.setpoint)}` })),
             h('div', { class: 'val', text: fmtTemp(e.dev.values.actual) }))));
@@ -735,9 +744,9 @@
             toggleRow('Übersicht anzeigen', () => cfg.showOverview, v => { cfg.showOverview = v; }),
             toggleRow('Favoriten anzeigen', () => cfg.showFavorites, v => { cfg.showFavorites = v; })
         ]);
-        const tl = { alarm: 'Alarmanlage', windows: 'Fenster offen', motion: 'Bewegung', lights: 'Eingeschaltet', blinds: 'Jalousien offen' };
+        const tl = { alarm: 'Alarmanlage', windows: 'Fenster offen', motion: 'Bewegung', lights: 'Eingeschaltet' };
         section('Kacheln in der Übersicht', Object.entries(tl).map(([k, l]) => toggleRow(l, () => cfg.tiles[k], v => { cfg.tiles[k] = v; })));
-        const ll = { windows: 'Offene Fenster', motion: 'Bewegung erkannt', lights: 'Eingeschaltete Geräte', temps: 'Temperaturen' };
+        const ll = { windows: 'Offene Fenster', motion: 'Bewegung erkannt', lights: 'Eingeschaltete Geräte', blinds: 'Jalousien (Prozent geschlossen)', temps: 'Temperaturen' };
         section('Listen in der Übersicht', Object.entries(ll).map(([k, l]) => toggleRow(l, () => cfg.lists[k], v => { cfg.lists[k] = v; })));
 
         // -- Etagen / Räume / Geräte
@@ -784,6 +793,13 @@
                 rows.push(editRow({
                     depth: 1, id: rid, toggle: true, open: S.open.has(rid), original: r.name, custom: rc.name, hidden: !!rc.hidden,
                     meta: r.devices.length + ' Geräte',
+                    extra: (() => {
+                        const anyVisible = r.devices.some(d => !(own(cfg.devices, d.id) || {}).hidden);
+                        return h('button', {
+                            class: 'pill', text: anyVisible ? 'Alle Geräte verstecken' : 'Alle Geräte zeigen',
+                            onclick: () => { r.devices.forEach(d => patchEntry(cfg.devices, d.id, { hidden: anyVisible })); changed(true); }
+                        });
+                    })(),
                     onName: v => patchEntry(rcfg, r.name, { name: v }),
                     onHide: v => patchEntry(rcfg, r.name, { hidden: v }),
                     onMove: d => { cfg.order.rooms[f.name] = moveKey(rooms.map(x => x.name), r.name, d); }
@@ -816,7 +832,13 @@
             }
         }
         out.push(h('h2', { class: 'room', text: 'Etagen, Räume & Geräte' }));
-        out.push(h('p', { class: 'hint', text: 'Namen antippen zum Umbenennen (leer = Originalname). Versteckte Geräte werden nur ausgeblendet, nicht gesperrt.' }));
+        out.push(h('p', { class: 'hint', text: 'Etage und Raum aufklappen, dann pro Gerät Name ändern (leer = Originalname) und Sichtbar/Versteckt wählen. Versteckte Geräte werden nur ausgeblendet, nicht gesperrt.' }));
+        out.push(h('div', { class: 'btn-row bulk' },
+            h('button', { class: 'btn', text: 'Alles aufklappen', onclick: () => {
+                for (const f of S.data.floors) { S.open.add('f:' + f.name); for (const r of f.rooms) S.open.add('r:' + f.name + '\u0000' + r.name); }
+                renderMain();
+            } }),
+            h('button', { class: 'btn', text: 'Alles zuklappen', onclick: () => { S.open.clear(); renderMain(); } })));
         out.push(h('div', { class: 'list' }, rows.length ? rows : h('div', { class: 'empty', text: 'Keine Geräte geladen.' })));
 
         out.push(h('div', { class: 'reset' },

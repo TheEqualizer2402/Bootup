@@ -30,6 +30,7 @@ class Bootup extends utils.Adapter {
         this.treeSignature = '';
         this.webServer = null;
         this.webConfig = sanitizeConfig(null); // Darstellung der Web-App
+        this.pendingNudges = new Map();        // baseId -> {timer, resolve, cancelled} (laufende Anstell-Impulse)
 
         this.subscriberId = null;         // aktuelle Notification-Subscription
         this.notificationsActive = false; // Flag zum sauberen Beenden der Poll-Schleife beim Unload
@@ -127,15 +128,27 @@ class Bootup extends utils.Adapter {
                 this.pendingNotificationReq = null;
             }
 
-            if (this.subscriberId) {
-                // Best-effort Unsubscribe, damit BootUp die Subscriber-Resource
-                // sofort freigibt statt erst nach ~1h Timeout.
-                this.apiRequest('DELETE', `${this.basePath}/notifications/${this.subscriberId}/unsubscribe`)
-                    .catch(() => {}) // Fehler beim Abmelden sind unkritisch
-                    .finally(() => callback());
-            } else {
-                callback();
+            // Laufende Anstell-Impulse sofort beenden: Jalousie nicht weiterfahren lassen
+            const stops = [];
+            for (const [baseId, entry] of this.pendingNudges) {
+                entry.cancelled = true;
+                this.clearTimeout(entry.timer);
+                entry.resolve();
+                stops.push(this.setBlindPosition(baseId, 'STOP').catch(() => {}));
             }
+            this.pendingNudges.clear();
+
+            Promise.all(stops).then(() => {
+                if (this.subscriberId) {
+                    // Best-effort Unsubscribe, damit BootUp die Subscriber-Resource
+                    // sofort freigibt statt erst nach ~1h Timeout.
+                    this.apiRequest('DELETE', `${this.basePath}/notifications/${this.subscriberId}/unsubscribe`)
+                        .catch(() => {}) // Fehler beim Abmelden sind unkritisch
+                        .finally(() => callback());
+                } else {
+                    callback();
+                }
+            });
         } catch (e) {
             callback();
         }
@@ -260,14 +273,16 @@ class Bootup extends utils.Adapter {
                 break;
             }
             case 'setpoint': {
-                if (meta.type !== 'DeviceStateThermostat') throw bad('Gerät ist kein Thermostat');
-                const v = cmd.value;
-                if (typeof v !== 'number' || !Number.isFinite(v) || v < 5 || v > 30) {
-                    throw bad('Solltemperatur muss zwischen 5 und 30 °C liegen');
-                }
-                const value = Math.round(v * 10) / 10;
-                this.log.info(`Web-App: Solltemperatur "${meta.name}" -> ${value} °C`);
-                action = () => this.setThermostatSetpoint(device, value);
+                // Sollwerte werden in der Web-App nur angezeigt (bewusst nicht änderbar)
+                throw bad('Solltemperaturen können in der App nicht geändert werden');
+            }
+            case 'nudge': {
+                if (meta.type !== 'DeviceStateBlind') throw bad('Gerät ist keine Jalousie');
+                if (cmd.value !== 'UP' && cmd.value !== 'DOWN') throw bad('Richtung muss UP oder DOWN sein');
+                const dir = cmd.value === 'UP' ? 'OPEN' : 'CLOSE';
+                const ms = this.getNudgeMs();
+                this.log.info(`Web-App: Jalousie "${meta.name}" anstellen (${cmd.value === 'UP' ? 'auf' : 'ab'}, ${ms} ms)`);
+                action = () => this.nudgeBlind(device, dir, ms);
                 break;
             }
             case 'scene': {
@@ -598,6 +613,42 @@ class Bootup extends utils.Adapter {
         const info = this.deviceIndex[baseId];
         if (!info) throw new Error(`Unbekannte Device-ID: ${baseId}`);
         return this.setDeviceState(info.pathRef, info.guid, 'position', position);
+    }
+
+    // Anstellzeit aus der Instanzkonfiguration (ms), begrenzt auf 100 - 10000
+    getNudgeMs() {
+        const v = Number(this.config.blindNudgeMs);
+        return Math.min(10000, Math.max(100, Number.isFinite(v) && v > 0 ? Math.round(v) : 1200));
+    }
+
+    // Jalousie kurz in eine Richtung fahren lassen und dann stoppen.
+    // Das Timing läuft im Adapter (nicht im Browser), damit der Stopp auch
+    // dann kommt, wenn das iPhone zwischendurch die Verbindung verliert.
+    async nudgeBlind(baseId, dir, ms) {
+        const prev = this.pendingNudges.get(baseId);
+        if (prev) {                       // laufender Impuls wird durch den neuen ersetzt
+            prev.cancelled = true;
+            this.clearTimeout(prev.timer);
+            prev.resolve();
+        }
+
+        await this.setBlindPosition(baseId, dir);
+
+        const entry = { cancelled: false, timer: null, resolve: null };
+        this.pendingNudges.set(baseId, entry);
+        await new Promise(resolve => {
+            entry.resolve = resolve;
+            entry.timer = this.setTimeout(resolve, ms);
+        });
+        if (entry.cancelled) return;      // wurde ersetzt oder beim Beenden bereits gestoppt
+        this.pendingNudges.delete(baseId);
+
+        try {
+            await this.setBlindPosition(baseId, 'STOP');
+        } catch (err) {
+            this.log.warn(`Stopp nach Anstellen fehlgeschlagen, neuer Versuch: ${err.message}`);
+            await this.setBlindPosition(baseId, 'STOP'); // Fehler wird an den Aufrufer gemeldet
+        }
     }
 
     setThermostatSetpoint(baseId, temperature) {

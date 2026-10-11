@@ -1,8 +1,12 @@
 {
   "common": {
     "name": "bootup",
-    "version": "0.7.0",
+    "version": "0.8.0",
     "news": {
+      "0.8.0": {
+        "en": "web app: thermostat setpoints are display-only, blind nudge buttons with configurable time, blind overview with percent closed",
+        "de": "Web-App: Thermostat-Sollwerte nur noch Anzeige, Anstell-Tasten für Jalousien mit einstellbarer Zeit, Jalousien-Übersicht mit Prozent geschlossen"
+      },
       "0.7.0": {
         "en": "web app: configurable appearance (hide/rename/reorder floors, rooms and devices, favorites, icons, theme, accent color, compact mode), synced across devices",
         "de": "Web-App: konfigurierbares Aussehen (Etagen, Räume und Geräte ausblenden/umbenennen/sortieren, Favoriten, Symbole, Design, Akzentfarbe, kompakte Ansicht), auf allen Geräten synchron"
@@ -88,6 +92,7 @@
     "localPort": 4443,
     "localProtocol": "http",
     "pollInterval": 60,
+    "blindNudgeMs": 1200,
     "webEnabled": false,
     "webPort": 8095,
     "webToken": ""

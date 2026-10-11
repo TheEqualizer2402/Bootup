@@ -100,6 +100,18 @@
       "md": 6
     },
 
+    "blindNudgeMs": {
+      "type": "number",
+      "label": "Anstellzeit Jalousien (ms)",
+      "help": "So lange fährt die Jalousie bei den Anstell-Tasten der App, danach folgt Stopp (100 - 10000, Standard 1200)",
+      "min": 100,
+      "max": 10000,
+      "step": 50,
+      "newLine": true,
+      "sm": 12,
+      "md": 6
+    },
+
     "_webHeader": {
       "type": "header",
       "text": "iPhone-Web-App",
